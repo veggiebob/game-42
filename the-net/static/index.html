@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<h1>Phone Pad</h1>
+<button id="up">↑</button>
+<button id="down">↓</button>
+<script>
+const ws = new WebSocket(`ws://${location.host}/ws`);
+function send(i) { ws.readyState===1 && ws.send(JSON.stringify(i)); }
+
+function btn(id, dir) {
+  const b = document.getElementById(id);
+  ["touchstart","mousedown"].forEach(e => b.addEventListener(e, _=>send({[dir]:true})));
+  ["touchend","mouseup","mouseleave"].forEach(e => b.addEventListener(e, _=>send({[dir]:false})));
+}
+btn("up",   "up");
+btn("down", "down");
+</script>
