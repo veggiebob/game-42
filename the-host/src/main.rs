@@ -1,3 +1,5 @@
+mod controls;
+
 use bevy::prelude::*;
 use net::{spawn as spawn_net, Input as NetInput, ServerEvent};
 use tokio::sync::mpsc::UnboundedReceiver;

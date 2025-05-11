@@ -3841,7 +3841,9 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "net",
+ "serde",
  "tokio",
+ "values_macro_derive",
 ]
 
 [[package]]
@@ -4181,6 +4183,15 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "values_macro_derive"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "serde",
+ "syn 2.0.101",
+]
 
 [[package]]
 name = "vec_map"
