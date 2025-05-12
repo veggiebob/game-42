@@ -1,11 +1,11 @@
 [package]
-name = "the-game-master"
+name = "the_host"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy          = "0.14"
-net           = { path = "../the-net" }
+bevy          = "0.16"
+game_42_net   = { path = "../the-net" }
 tokio         = { version = "1.37", features = ["rt-multi-thread"] }
 values_macro_derive = { path="../values_macro_derive" }
 serde = { version = "1.0", features = ["derive"] }
