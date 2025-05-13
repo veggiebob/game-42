@@ -1,4 +1,3 @@
-mod controls;
 
 use std::thread;
 use bevy::prelude::*;
@@ -10,6 +9,11 @@ fn setup() {
     let host_interface = game_42_net::protocol::HostInterface::new(rx, tx);
     thread::spawn(move || {
         game_42_net::main(host_interface);
+    });
+    thread::spawn(move || {
+        for msg in recv_net {
+            info!("Rocket: received message {msg:?}");
+        }
     });
 }
 

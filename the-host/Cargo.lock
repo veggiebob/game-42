@@ -2324,11 +2324,13 @@ dependencies = [
 name = "game_42_net"
 version = "0.1.0"
 dependencies = [
+ "log",
  "rocket",
  "rocket_ws",
  "serde",
  "serde_json",
  "tokio",
+ "values_macro_derive",
 ]
 
 [[package]]

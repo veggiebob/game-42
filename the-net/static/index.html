@@ -4,14 +4,20 @@
 <button id="up">↑</button>
 <button id="down">↓</button>
 <script>
-const ws = new WebSocket(`ws://${location.host}/ws`);
+const ws = new WebSocket(`ws://${location.host}/game/ws`);
 function send(i) { ws.readyState===1 && ws.send(JSON.stringify(i)); }
 
-function btn(id, dir) {
-  const b = document.getElementById(id);
-  ["touchstart","mousedown"].forEach(e => b.addEventListener(e, _=>send({[dir]:true})));
-  ["touchend","mouseup","mouseleave"].forEach(e => b.addEventListener(e, _=>send({[dir]:false})));
+function button_msg(but, pressed) {
+    return {Input: {Button: [but, pressed]}}
 }
-btn("up",   "up");
-btn("down", "down");
+function joystick_msg(joy, value) {
+    return {Input: {Joystick: [joy, value]}}
+}
+function btn(id, but) {
+  const b = document.getElementById(id);
+  ["touchstart","mousedown"].forEach(e => b.addEventListener(e, _=>send(button_msg(but, true))));
+  ["touchend","mouseup","mouseleave"].forEach(e => b.addEventListener(e, _=>send(button_msg(but, false))));
+}
+btn("up",   "A");
+btn("down", "B");
 </script>

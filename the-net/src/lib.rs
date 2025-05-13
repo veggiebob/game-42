@@ -1,48 +1,62 @@
 pub mod protocol;
-
+pub mod websocket;
+pub mod controls;
 
 #[macro_use]
 extern crate rocket;
+
+use std::collections::HashSet;
 use rocket_ws::{Channel, WebSocket};
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use rocket::{Build, Rocket, State};
 use rocket::fs::{relative, FileServer, Options};
 use rocket::response::status;
-use crate::protocol::HostInterface;
+use crate::protocol::{HostInterface, UserId};
+use crate::websocket::handle_socket;
+
+#[derive(Default)]
+pub(crate) struct Users {
+    connected: HashSet<UserId>
+}
+
+impl Users {
+    pub fn add_next(&mut self) -> UserId {
+        let x = self.connected.iter().min().map(|ui| ui.0).unwrap_or(0);
+        let mut uid = UserId(x);
+        while self.connected.contains(&uid) {
+            uid.0 += 1;
+        }
+        self.connected.insert(uid.clone());
+        uid
+    }
+}
 
 #[get("/")]
 fn index() -> &'static str {
     "Hello world!"
 }
 
-// #[get("/ws")]
-// fn updates<'r>() -> Result<Channel<'r>, status::Forbidden<&'static str>> {
-//     let server2 = server;
-//     let mut server = server.lock().unwrap();
-//     let rx = server
-//         .register(make_user_id(uid.to_string()))
-//         .map_err(|_| status::Forbidden("Already registered"))?;
-//     let tx = server_sender.0.clone();
-//     Ok(ws.channel(move |stream| Box::pin(handle_socket(server2, tx, rx, stream, uid.to_string()))))
-// }
+#[get("/ws")]
+fn updates<'r>(
+    ws: WebSocket,
+    host_interface: &'r State<HostInterface>,
+    users: &'r State<Arc<Mutex<Users>>>,
+) -> Result<Channel<'r>, status::Forbidden<&'static str>> {
+    Ok(ws.channel(move |stream| Box::pin(handle_socket(stream, host_interface.clone(), users.clone()))))
+}
 
-fn rocket() -> Rocket<Build> {
+fn rocket(host_interface: HostInterface) -> Rocket<Build> {
     rocket::build()
+        .manage(host_interface)
+        .manage(Arc::new(Mutex::new(Users::default())))
         .mount("/", FileServer::new(relative!["static"], Options::default()))
-        .mount("/helloworld", routes![index])
+        .mount("/game", routes![index, updates])
 }
 
 pub fn main(host_interface: HostInterface) {
-    ::rocket::async_main(async {
-        let _ = rocket().launch().await;
+    rocket::async_main(async move {
+        let _ = rocket(host_interface).launch().await;
     });
 }
-
-// #[launch]
-// fn rocket(host_interface: HostInterface) -> Rocket<Build> {
-//     rocket::build()
-//         .mount("/", FileServer::new(relative!["static"], Options::default()))
-//         .mount("/helloworld", routes![index])
-//         .mount("/ws", routes![updates])
-// }
