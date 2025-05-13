@@ -1,10 +1,10 @@
-use bevy::reflect::erased_serde::__private::serde;
-use bevy::utils::HashMap;
+mod message;
+
 use values_macro_derive::{EnumValues, Mapping};
 use serde::{Deserialize, Serialize};
 
 /// Identifies a button
-#[derive(EnumValues, Mapping)]
+#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone)]
 pub enum ButtonType {
     A,
     B,
@@ -17,7 +17,7 @@ pub enum ButtonType {
 }
 
 /// Identifies which axis it is (a traditional joystick has 2 axes, X and Y).
-#[derive(EnumValues, Mapping)]
+#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone)]
 pub enum JoystickAxis {
     LeftX,
     LeftY,
@@ -39,6 +39,12 @@ pub struct ButtonState {
 
 pub struct JoystickState {
     value: f32
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum InputUpdate {
+    Button(ButtonType, bool),
+    Joystick(JoystickAxis, f32),
 }
 
 impl ButtonState {
