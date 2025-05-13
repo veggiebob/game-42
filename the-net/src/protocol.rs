@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::sync::mpsc::{Receiver, Sender};
 use rocket_ws::Message;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,14 @@ pub struct UserId(pub u64);
 #[derive(Debug)]
 pub struct AnnotatedClientPacket {
     pub user_id: UserId,
-    pub client_packet: ClientPacket
+    pub packet: Packet
+}
+
+#[derive(Debug)]
+pub enum Packet {
+    Connected,
+    Disconnected,
+    Client(ClientPacket)
 }
 
 /// Packet going from client to net (here)
@@ -43,6 +51,12 @@ impl ClientPacket {
             Message::Binary(_) => Err(serde_json::Error::custom("Binary message not supported yet.")),
             _ => Err(serde_json::Error::custom("Unknown message type.")),
         }
+    }
+}
+
+impl Display for UserId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Player {}", self.0)
     }
 }
 

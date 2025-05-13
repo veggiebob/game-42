@@ -44,7 +44,7 @@ fn updates<'r>(
     host_interface: &'r State<HostInterface>,
     users: &'r State<Arc<Mutex<Users>>>,
 ) -> Result<Channel<'r>, status::Forbidden<&'static str>> {
-    Ok(ws.channel(move |stream| Box::pin(handle_socket(stream, host_interface.clone(), users.clone()))))
+    Ok(ws.channel(move |stream| Box::pin(handle_socket(stream, host_interface, users))))
 }
 
 fn rocket(host_interface: HostInterface) -> Rocket<Build> {

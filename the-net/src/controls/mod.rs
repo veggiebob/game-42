@@ -47,6 +47,22 @@ pub enum InputUpdate {
     Joystick(JoystickAxis, f32),
 }
 
+impl PlayerInput {
+    pub fn new() -> Self {
+        PlayerInput {
+            buttons: ButtonTypeMapping::new(|_b| ButtonState::new()),
+            joysticks: JoystickAxisMapping::new(|_j| JoystickState::new()),
+        }
+    }
+
+    pub fn update_button(&mut self, button_type: ButtonType, pressed: bool) {
+        self.buttons.get_mut(button_type).update(pressed);
+    }
+
+    pub fn update_joystick(&mut self, joystick_axis: JoystickAxis, value: f32) {
+        self.joysticks.get_mut(joystick_axis).update(value);
+    }
+}
 impl ButtonState {
     pub fn new() -> Self {
         ButtonState {
