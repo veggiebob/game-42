@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy          = "0.16"
+bevy          = {  version = "0.16", features = ["file_watcher"] }
 game_42_net   = { path = "../the-net" }
 tokio         = { version = "1.37", features = ["rt-multi-thread"] }
 values_macro_derive = { path="../values_macro_derive" }

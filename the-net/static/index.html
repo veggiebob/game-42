@@ -3,6 +3,8 @@
 <h1>Phone Pad</h1>
 <button id="up">↑</button>
 <button id="down">↓</button>
+<button id="left">←</button>
+<button id="right">→</button>
 <script>
 const ws = new WebSocket(`ws://${location.host}/game/ws`);
 function send(i) { ws.readyState===1 && ws.send(JSON.stringify(i)); }
@@ -18,6 +20,8 @@ function btn(id, but) {
   ["touchstart","mousedown"].forEach(e => b.addEventListener(e, _=>send(button_msg(but, true))));
   ["touchend","mouseup","mouseleave"].forEach(e => b.addEventListener(e, _=>send(button_msg(but, false))));
 }
-btn("up",   "A");
-btn("down", "B");
+btn("up",   "Up");
+btn("down", "Down");
+btn("left", "Left");
+btn("right","Right");
 </script>

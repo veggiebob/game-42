@@ -51,7 +51,7 @@ pub(crate) async fn handle_socket(
                     break;
                 }
                 msg => {
-                    info!("Received message: {msg:?}");
+                    // info!("Received message: {msg:?}");
                     match ClientPacket::from_ws_message(msg) {
                         Ok(client_packet) => {
                             to_host.send(AnnotatedClientPacket {

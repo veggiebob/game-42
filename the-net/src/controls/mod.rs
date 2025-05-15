@@ -1,4 +1,3 @@
-mod message;
 
 use values_macro_derive::{EnumValues, Mapping};
 use serde::{Deserialize, Serialize};
@@ -62,6 +61,10 @@ impl PlayerInput {
     pub fn update_joystick(&mut self, joystick_axis: JoystickAxis, value: f32) {
         self.joysticks.get_mut(joystick_axis).update(value);
     }
+    
+    pub fn is_pressed(&self, button_type: ButtonType) -> bool {
+        self.buttons.get(button_type).pressed
+    }
 }
 impl ButtonState {
     pub fn new() -> Self {
@@ -73,8 +76,13 @@ impl ButtonState {
     }
 
     pub fn update(&mut self, pressed: bool) {
-        self.just_pressed = !self.pressed && pressed;
-        self.just_released = self.pressed && !pressed;
+        // persist value until consumed or un-pressed
+        self.just_pressed = (!self.pressed || self.just_pressed) && pressed;
+        self.just_released = if pressed {
+            false
+        } else {
+            self.just_released || self.pressed
+        };
         self.pressed = pressed;
     }
 
@@ -82,12 +90,30 @@ impl ButtonState {
         self.pressed
     }
 
-    pub fn just_pressed(&self) -> bool {
-        self.just_pressed
+    /// Consuming
+    pub fn just_pressed(&mut self) -> bool {
+        if self.pressed {
+            // consume it
+            let b = self.just_pressed;
+            self.just_pressed = false;
+            b
+        } else {
+            self.just_pressed = false;
+            false
+        }
     }
 
-    pub fn just_released(&self) -> bool {
-        self.just_released
+    /// Consuming
+    pub fn just_released(&mut self) -> bool {
+        if !self.pressed {
+            // consume it
+            let b = self.just_released;
+            self.just_released = false;
+            b
+        } else {
+            self.just_released = false;
+            false
+        }
     }
 }
 

@@ -1,11 +1,20 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread;
+mod assets;
+mod debug_input;
+mod games;
+
+use crate::assets::ReloadManager;
+use crate::debug_input::handle_input;
+use crate::games::racing::control_cars;
 use bevy::prelude::*;
+use bevy::window::WindowResized;
 use game_42_net::controls::{InputUpdate, PlayerInput};
-use game_42_net::protocol::{AnnotatedClientPacket, Packet, UserId};
 use game_42_net::protocol::ClientPacket::Input;
+use game_42_net::protocol::{AnnotatedClientPacket, Packet, UserId};
+use games::racing;
+use std::collections::HashMap;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 /// Use this to message the net (probably a client?)
 #[derive(Resource)]
@@ -17,9 +26,13 @@ pub struct NetMessages(pub Mutex<Receiver<AnnotatedClientPacket>>);
 #[derive(Resource)]
 pub struct PlayerInputs(pub HashMap<UserId, PlayerInput>);
 
-fn setup(
-    mut commands: Commands
-) {
+// Map UserIds (connections) to player numbers (1, 2, 3, ...)
+// Not necessary to use this interface; see example at games::racing::control_cars
+type PlayerNum = u8;
+#[derive(Resource)]
+pub struct PlayerMapping(pub HashMap<PlayerNum, UserId>);
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // start the web server
     let (send_net, rx) = std::sync::mpsc::channel();
     let (tx, recv_net) = std::sync::mpsc::channel();
@@ -30,28 +43,55 @@ fn setup(
     commands.insert_resource(NetMessages(Mutex::new(recv_net)));
     commands.insert_resource(MessageNet(send_net));
     commands.insert_resource(PlayerInputs(HashMap::new()));
+    commands.insert_resource(PlayerMapping(HashMap::new()));
+
+    commands.insert_resource(ReloadManager::new());
 }
 
+// need more game states & transition logic
+fn game_flow(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    reload_manager: ResMut<ReloadManager>,
+) {
+    racing::start_game(commands, asset_server);
+}
+
+// handle player connections
 fn process_messages(
     receiver: Res<NetMessages>,
+    mut pm: ResMut<PlayerMapping>,
     mut player_inputs: ResMut<PlayerInputs>,
-    mut commands: Commands
+    mut commands: Commands,
 ) {
     let mut pi = &mut player_inputs.as_mut().0;
+    let mut pm = pm.as_mut();
     while let Ok(Ok(msg)) = receiver.0.lock().map(|l| l.try_recv()) {
         match msg.packet {
             Packet::Connected => {
-                info!("Player {} connected!", msg.user_id);
+                let player_number = pm.connect_lowest_num(&msg.user_id);
+                info!(
+                    "Player {} connected as player {}!",
+                    msg.user_id, player_number
+                );
                 // spawn something here?
                 pi.insert(msg.user_id, PlayerInput::new());
             }
             Packet::Disconnected => {
-                info!("Player {} disconnected!", msg.user_id);
+                let disconnected = pm.remove(&msg.user_id);
+                info!(
+                    "Player {} disconnected from player {}!",
+                    msg.user_id,
+                    disconnected.unwrap()
+                );
                 // despawn something here?
                 match pi.remove(&msg.user_id) {
                     None => {
-                        error!("Player {} disconnected but had no controls to begin with.", msg.user_id);
-                    },
+                        error!(
+                            "Player {} disconnected but had no controls to begin with.",
+                            msg.user_id
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -60,11 +100,11 @@ fn process_messages(
                     if let Input(inp) = packet {
                         match inp {
                             InputUpdate::Button(but, pressed) => {
-                                info!("Updated button");
+                                // info!("Updated button");
                                 entry.update_button(but, pressed);
                             }
                             InputUpdate::Joystick(joy, v) => {
-                                info!("Updated joystick");
+                                // info!("Updated joystick");
                                 entry.update_joystick(joy, v);
                             }
                         }
@@ -79,10 +119,51 @@ fn process_messages(
     }
 }
 
+// don't use rn, maybe later
+// fn keep_aspect_ratio(
+//     mut window: Single<&mut Window>,
+//     mut resize_reader: EventReader<WindowResized>
+// ) {
+//     static ASPECT_RATIO: f32 = 7. / 6.; // height / width
+//     if let Some(res) = resize_reader.read().last() {
+//         let fwidth = res.height / ASPECT_RATIO;
+//         let fheight = fwidth * ASPECT_RATIO;
+//         window.resolution.set(fwidth, fwidth);
+//         println!("Resized window to {fwidth}x{fheight}")
+//     }
+// }
+
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_systems(Startup, setup)
-        .add_systems(Update, process_messages)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                resolution: (1080., 1260.).into(),
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_systems(Startup, (setup, game_flow).chain())
+        .add_systems(Update, (process_messages, handle_input))
+        // racing game
+        .add_systems(FixedUpdate, control_cars)
         .run();
+}
+
+impl PlayerMapping {
+    pub fn connect_lowest_num(&mut self, user_id: &UserId) -> PlayerNum {
+        let mut min = self.0.keys().min().map(|x| *x).unwrap_or(1);
+        while self.0.contains_key(&min) {
+            min += 1;
+        }
+        self.0.insert(min, user_id.clone());
+        min
+    }
+    pub fn remove(&mut self, user_id: &UserId) -> Option<PlayerNum> {
+        if let Some((&player_num, _uid)) = self.0.iter().find(|(k, v)| v == &user_id) {
+            self.0.remove(&player_num);
+            Some(player_num)
+        } else {
+            None
+        }
+    }
 }
