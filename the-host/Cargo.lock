@@ -4845,6 +4845,8 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "game_42_net",
+ "rand",
+ "rand_chacha",
  "serde",
  "tokio",
  "values_macro_derive",

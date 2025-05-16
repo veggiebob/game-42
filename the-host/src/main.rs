@@ -1,10 +1,11 @@
 mod assets;
 mod debug_input;
-mod games;
+pub mod games;
 
+use std::collections::hash_map::Keys;
 use crate::assets::ReloadManager;
 use crate::debug_input::handle_input;
-use crate::games::racing::control_cars;
+use crate::games::racing::{control_cars, spawn_new_players};
 use bevy::prelude::*;
 use bevy::window::WindowResized;
 use game_42_net::controls::{InputUpdate, PlayerInput};
@@ -15,6 +16,11 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use rand_chacha::rand_core::SeedableRng;
+use crate::games::racing::materials::RacingGroundMaterial;
+
+#[derive(Resource)]
+pub(crate) struct RandomSource(rand_chacha::ChaCha8Rng);
 
 /// Use this to message the net (probably a client?)
 #[derive(Resource)]
@@ -40,21 +46,20 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     thread::spawn(move || {
         game_42_net::main(host_interface);
     });
+    
+    // communications
     commands.insert_resource(NetMessages(Mutex::new(recv_net)));
     commands.insert_resource(MessageNet(send_net));
     commands.insert_resource(PlayerInputs(HashMap::new()));
     commands.insert_resource(PlayerMapping(HashMap::new()));
-
+    
+    // frontend bevy stuff
     commands.insert_resource(ReloadManager::new());
-}
 
-// need more game states & transition logic
-fn game_flow(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    reload_manager: ResMut<ReloadManager>,
-) {
-    racing::start_game(commands, asset_server);
+    // https://bevyengine.org/examples/math/random-sampling/
+    let seeded_rng = rand_chacha::ChaCha8Rng::seed_from_u64(1029301923);
+    // let seeded_rng = ChaCha8Rng::from_os_rng();
+    commands.insert_resource(RandomSource(seeded_rng));
 }
 
 // handle player connections
@@ -134,7 +139,8 @@ fn process_messages(
 // }
 
 fn main() {
-    App::new()
+    let mut app = App::new();
+    app
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 resolution: (1080., 1260.).into(),
@@ -142,11 +148,11 @@ fn main() {
             }),
             ..default()
         }))
-        .add_systems(Startup, (setup, game_flow).chain())
+        .add_systems(Startup, setup)
         .add_systems(Update, (process_messages, handle_input))
-        // racing game
-        .add_systems(FixedUpdate, control_cars)
-        .run();
+        ;
+    racing::init_app(&mut app);
+    app.run();
 }
 
 impl PlayerMapping {
@@ -165,5 +171,9 @@ impl PlayerMapping {
         } else {
             None
         }
+    }
+    
+    pub fn get_players(&self) -> Keys<PlayerNum, UserId> {
+        self.0.keys()
     }
 }

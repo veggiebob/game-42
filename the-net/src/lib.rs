@@ -50,7 +50,7 @@ fn updates<'r>(
 fn rocket(host_interface: HostInterface) -> Rocket<Build> {
     let figment = rocket::Config::figment()
         .merge(("port", 8000))
-        // .merge(("address", "0.0.0.0")) // when you want to visit it from outside
+        .merge(("address", "0.0.0.0")) // when you want to visit it from outside
     ;
     rocket::custom(figment)
         .manage(host_interface)
