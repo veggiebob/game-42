@@ -1,24 +1,26 @@
 pub mod materials;
 
-use std::collections::HashSet;
 use crate::games::Player;
+use crate::games::racing::materials::race_rails::RailsMaterial;
+use crate::games::racing::materials::{MaterialOverride, MaterialOverrides, material_override};
 use crate::{PlayerInputs, PlayerMapping, RandomSource};
-use bevy::gltf::GltfAssetLabel;
-use bevy::math::{Quat, vec3, ShapeSample};
-use bevy::prelude::{AssetServer, Camera3d, Color, Commands, Component, DirectionalLight, Entity, Query, Res, SceneRoot, Transform, Vec3, With, default, Cylinder, Circle, ResMut, MeshMaterial3d, Assets, LinearRgba, IntoScheduleConfigs};
-use game_42_net::controls::ButtonType;
-use std::f32::consts::PI;
 use bevy::app::{App, FixedUpdate, Startup};
-use bevy::pbr::MaterialPlugin;
-use crate::games::racing::materials::{material_override2, MaterialOverride, RacingGroundMaterial};
-
+use bevy::gltf::GltfAssetLabel;
+use bevy::math::{Quat, ShapeSample, vec3};
+use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
+use bevy::prelude::{AssetServer, Assets, Camera3d, Circle, Color, Commands, Component, DirectionalLight, Entity, IntoScheduleConfigs, LinearRgba, Query, Res, ResMut, SceneRoot, Transform, Vec3, With, default, AlphaMode, info, Mesh, Sphere, Meshable, Mesh3d};
+use game_42_net::controls::ButtonType;
+use materials::racetrack::RacetrackMaterial;
+use std::collections::HashSet;
+use std::f32::consts::PI;
 
 pub fn init_app(app: &mut App) {
     app
-        .add_plugins(MaterialPlugin::<RacingGroundMaterial>::default())
+        .add_plugins(MaterialPlugin::<RacetrackMaterial>::default())
+        .add_plugins(MaterialPlugin::<RailsMaterial>::default())
         .add_systems(Startup, start_game.after(crate::setup))
         .add_systems(FixedUpdate, (control_cars, spawn_new_players))
-        .add_observer(material_override2)
+        // .add_observer(material_override)
     ;
 }
 
@@ -31,8 +33,10 @@ pub struct RaceGameMarker;
 /// it around a track :)
 pub fn start_game(
     mut commands: Commands,
-    mut materials: ResMut<Assets<RacingGroundMaterial>>,
-    asset_server: Res<AssetServer>
+    mut racetrack_material: ResMut<Assets<RacetrackMaterial>>,
+    mut rails_material: ResMut<Assets<RailsMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    asset_server: Res<AssetServer>,
 ) {
     commands.spawn((
         RaceGameMarker,
@@ -46,15 +50,41 @@ pub fn start_game(
             ..default()
         },
     ));
+    let rails = rails_material.add(RailsMaterial {
+        color: LinearRgba::rgb(1., 1., 1.),
+        color_texture: None,
+        alpha_mode: Default::default(),
+    });
+    let racetrack = racetrack_material.add(RacetrackMaterial {
+        color: LinearRgba::rgb(1., 1., 1.),
+        color_texture: Some(asset_server.load("textures/asphalt2.png")),
+        alpha_mode: AlphaMode::Opaque,
+    });
+    let material_overrides = MaterialOverrides::new(
+        vec![
+            MaterialOverride::Racetrack(racetrack.clone()),
+            MaterialOverride::Rails(racetrack.clone()),
+        ]
+            .into_iter(),
+    );
+    info!("material overrides: {:#?}", material_overrides);
     commands.spawn((
         RaceGameMarker,
         SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"))),
-        MaterialOverride::Ground(RacingGroundMaterial {
-            color: LinearRgba::rgb(1., 1., 1.),
-            color_texture: Some(asset_server.load("textures/ground.png")),
-            alpha_mode: Default::default(),
-        })
+        material_overrides
     ));
+    
+    
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Sphere::default().mesh().uv(32, 18))),
+    //     MeshMaterial3d(racetrack.clone()),
+    //     Transform::from_xyz(2., 0., 0.)
+    // ));
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Sphere::default().mesh().uv(32, 18))),
+    //     MeshMaterial3d(rails.clone()),
+    //     Transform::from_xyz(-2., 0., 0.)
+    // ));
 }
 
 pub fn spawn_new_players(
@@ -64,9 +94,9 @@ pub fn spawn_new_players(
     cars: Query<&Player, With<RaceGameMarker>>,
     player_mapping: Res<PlayerMapping>,
 ) {
-    let car_players: HashSet<_> = cars.into_iter().map(|x| x.0)
-        .collect();
-    let players_without_cars = player_mapping.get_players()
+    let car_players: HashSet<_> = cars.into_iter().map(|x| x.0).collect();
+    let players_without_cars = player_mapping
+        .get_players()
         .filter(|p| !car_players.contains(p));
     let spawn_area = Circle::new(3.);
     for player in players_without_cars {

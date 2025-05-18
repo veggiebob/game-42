@@ -19,7 +19,7 @@ use std::thread;
 use bevy::remote::http::RemoteHttpPlugin;
 use bevy::remote::RemotePlugin;
 use rand_chacha::rand_core::SeedableRng;
-use crate::games::racing::materials::RacingGroundMaterial;
+use games::racing::materials::racetrack::RacetrackMaterial;
 
 #[derive(Resource)]
 pub(crate) struct RandomSource(rand_chacha::ChaCha8Rng);
