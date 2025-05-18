@@ -10,7 +10,8 @@ values_macro_derive = { path="../values_macro_derive" }
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.8.0"
 rand_chacha = "0.3.1"
+qrcodegen = "1.8.0"
 
 [dependencies.bevy]
 version = "0.16"
-features = ["file_watcher", "shader_format_glsl"]
+features = ["file_watcher", "shader_format_glsl", "bevy_remote"]

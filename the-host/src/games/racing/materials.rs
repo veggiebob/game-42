@@ -1,22 +1,32 @@
+use crate::games::racing::RaceGameMarker;
+use bevy::gltf::GltfMaterialName;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey, StandardMaterial};
-use bevy::prelude::{info, AlphaMode, Asset, Assets, Children, Commands, Component, Handle, Image, LinearRgba, Material, MeshMaterial3d, Query, ResMut, Trigger, TypePath, With};
+use bevy::prelude::{AlphaMode, Asset, Assets, Children, Commands, Component, Entity, Handle, Image, LinearRgba, Material, MeshMaterial3d, Query, ResMut, Trigger, TypePath, With, World, info, Plugin};
 use bevy::render::mesh::MeshVertexBufferLayoutRef;
-use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+};
 use bevy::scene::SceneInstanceReady;
 use rand::distributions::Standard;
-use crate::games::racing::RaceGameMarker;
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub enum MaterialOverride {
     Ground(RacingGroundMaterial),
 }
 
-pub fn material_override(
+impl MaterialOverride {
+    pub fn get_gltf_name(&self) -> &str {
+        match self {
+            MaterialOverride::Ground(_) => "road_simple",
+        }
+    }
+}
+
+pub fn material_override2(
     trigger: Trigger<SceneInstanceReady>,
     mut commands: Commands,
     mat_override: Query<&MaterialOverride, With<RaceGameMarker>>,
-    current_materials: Query<&MeshMaterial3d<StandardMaterial>>,
-    mut asset_materials: ResMut<Assets<StandardMaterial>>,
+    gltf_children: Query<&GltfMaterialName, With<MeshMaterial3d<StandardMaterial>>>,
     children: Query<&Children>,
     mut ground_materials: ResMut<Assets<RacingGroundMaterial>>,
 ) {
@@ -25,26 +35,24 @@ pub fn material_override(
         return;
     };
     for descendant in children.iter_descendants(trigger.target()) {
-        if let Some(material) = current_materials
-            .get(descendant)
-            .ok()
-            .and_then(|id| asset_materials.get_mut(id.id()))
-        {
-            info!("Replacing material");
-            commands.entity(descendant).remove::<MeshMaterial3d<StandardMaterial>>();
-            commands.entity(descendant)
-                .insert(MeshMaterial3d(
-                    match mat_override {
-                        MaterialOverride::Ground(rgm) => {
-                            ground_materials.add(rgm.clone())
-                        }
-                    }
-                ));
+        if let Ok(gltf_name) = gltf_children.get(descendant) {
+            info!("Comparing {:?} and {:?}", gltf_name.0, mat_override.get_gltf_name());
+            if gltf_name.0 == mat_override.get_gltf_name() {
+                info!("Replacing material");
+                commands
+                    .entity(descendant)
+                    .remove::<MeshMaterial3d<StandardMaterial>>();
+                commands
+                    .entity(descendant)
+                    .insert(MeshMaterial3d(match mat_override {
+                        MaterialOverride::Ground(rgm) => ground_materials.add(rgm.clone()),
+                    }));
+            }
         }
     }
 }
 
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct RacingGroundMaterial {
     #[uniform(0)]
     pub color: LinearRgba,

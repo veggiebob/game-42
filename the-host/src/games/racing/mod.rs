@@ -10,7 +10,7 @@ use game_42_net::controls::ButtonType;
 use std::f32::consts::PI;
 use bevy::app::{App, FixedUpdate, Startup};
 use bevy::pbr::MaterialPlugin;
-use crate::games::racing::materials::{MaterialOverride, RacingGroundMaterial};
+use crate::games::racing::materials::{material_override2, MaterialOverride, RacingGroundMaterial};
 
 
 pub fn init_app(app: &mut App) {
@@ -18,7 +18,7 @@ pub fn init_app(app: &mut App) {
         .add_plugins(MaterialPlugin::<RacingGroundMaterial>::default())
         .add_systems(Startup, start_game.after(crate::setup))
         .add_systems(FixedUpdate, (control_cars, spawn_new_players))
-        .add_observer(materials::material_override)
+        .add_observer(material_override2)
     ;
 }
 

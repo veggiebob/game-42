@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use bevy::remote::http::RemoteHttpPlugin;
+use bevy::remote::RemotePlugin;
 use rand_chacha::rand_core::SeedableRng;
 use crate::games::racing::materials::RacingGroundMaterial;
 
@@ -141,6 +143,8 @@ fn process_messages(
 fn main() {
     let mut app = App::new();
     app
+        .add_plugins(RemotePlugin::default())
+        .add_plugins(RemoteHttpPlugin::default())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 resolution: (1080., 1260.).into(),
