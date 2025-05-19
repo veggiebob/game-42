@@ -51,42 +51,42 @@ impl MaterialOverrides {
     }
 }
 
-pub fn material_override(
-    trigger: Trigger<SceneInstanceReady>,
-    mut commands: Commands,
-    mat_override_query: Query<&MaterialOverrides, With<RaceGameMarker>>,
-    gltf_children: Query<&GltfMaterialName, With<MeshMaterial3d<StandardMaterial>>>,
-    children: Query<&Children>,
-) {
-    info!("Scene Instance Ready: {:?}", trigger.target());
-    let Ok(mat_overrides) = mat_override_query.get(trigger.target()) else {
-        return;
-    };
-    for descendant in children.iter_descendants(trigger.target()).collect::<Vec<_>>().into_iter() {
-        if let Ok(gltf_name) = gltf_children.get(descendant) {
-            info!("Checking {}", gltf_name.0);
-            if let Some(mat_override) = mat_overrides.0.get(&gltf_name.0) {
-                info!("Replacing material {}", mat_override.get_gltf_name());
-                match mat_override {
-                    MaterialOverride::Racetrack(mat_handle) => {
-                        commands
-                            .entity(descendant)
-                            .remove::<MeshMaterial3d<StandardMaterial>>();
-                        commands
-                            .entity(descendant)
-                            .insert(MeshMaterial3d(mat_handle.clone()));
-                    }
-                    MaterialOverride::Rails(mat_handle) => {
-                        commands
-                            .entity(descendant)
-                            .remove::<MeshMaterial3d<StandardMaterial>>();
-                        commands
-                            .entity(descendant)
-                            .insert(MeshMaterial3d(mat_handle.clone()));
-                    }
-                    _ => {}
-                };
-            }
-        }
-    }
-}
+// pub fn material_override(
+//     trigger: Trigger<SceneInstanceReady>,
+//     mut commands: Commands,
+//     mat_override_query: Query<&MaterialOverrides, With<RaceGameMarker>>,
+//     gltf_children: Query<&GltfMaterialName, With<MeshMaterial3d<StandardMaterial>>>,
+//     children: Query<&Children>,
+// ) {
+//     info!("Scene Instance Ready: {:?}", trigger.target());
+//     let Ok(mat_overrides) = mat_override_query.get(trigger.target()) else {
+//         return;
+//     };
+//     for descendant in children.iter_descendants(trigger.target()).collect::<Vec<_>>().into_iter() {
+//         if let Ok(gltf_name) = gltf_children.get(descendant) {
+//             info!("Checking {}", gltf_name.0);
+//             if let Some(mat_override) = mat_overrides.0.get(&gltf_name.0) {
+//                 info!("Replacing material {}", mat_override.get_gltf_name());
+//                 match mat_override {
+//                     MaterialOverride::Racetrack(mat_handle) => {
+//                         commands
+//                             .entity(descendant)
+//                             .remove::<MeshMaterial3d<StandardMaterial>>();
+//                         commands
+//                             .entity(descendant)
+//                             .insert(MeshMaterial3d(mat_handle.clone()));
+//                     }
+//                     MaterialOverride::Rails(mat_handle) => {
+//                         commands
+//                             .entity(descendant)
+//                             .remove::<MeshMaterial3d<StandardMaterial>>();
+//                         commands
+//                             .entity(descendant)
+//                             .insert(MeshMaterial3d(mat_handle.clone()));
+//                     }
+//                     _ => {}
+//                 };
+//             }
+//         }
+//     }
+// }

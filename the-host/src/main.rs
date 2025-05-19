@@ -7,7 +7,7 @@ use crate::assets::ReloadManager;
 use crate::debug_input::handle_input;
 use crate::games::racing::{control_cars, spawn_new_players};
 use bevy::prelude::*;
-use bevy::window::WindowResized;
+use bevy::window::{CursorGrabMode, WindowResized};
 use game_42_net::controls::{InputUpdate, PlayerInput};
 use game_42_net::protocol::ClientPacket::Input;
 use game_42_net::protocol::{AnnotatedClientPacket, Packet, UserId};
@@ -140,6 +140,23 @@ fn process_messages(
 //     }
 // }
 
+fn grab_mouse(
+    mut window: Query<&mut Window>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if let Ok(mut window) = window.single_mut() {
+        if mouse.just_pressed(MouseButton::Left) {
+            window.cursor_options.visible = false;
+            window.cursor_options.grab_mode = CursorGrabMode::Locked;
+        }
+        if keys.just_pressed(KeyCode::Escape) {
+            window.cursor_options.visible = true;
+            window.cursor_options.grab_mode = CursorGrabMode::None;
+        }
+    }
+}
+
 fn main() {
     let mut app = App::new();
     app
@@ -153,6 +170,7 @@ fn main() {
             ..default()
         }))
         .add_systems(Startup, setup)
+        .add_systems(First, grab_mouse)
         .add_systems(Update, (process_messages, handle_input))
         ;
     racing::init_app(&mut app);

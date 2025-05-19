@@ -11,6 +11,8 @@ serde = { version = "1.0", features = ["derive"] }
 rand = "0.8.0"
 rand_chacha = "0.3.1"
 qrcodegen = "1.8.0"
+bevy_fly_camera = "0.16.0"
+avian3d = "0.3"
 
 [dependencies.bevy]
 version = "0.16"
