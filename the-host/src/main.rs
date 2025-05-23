@@ -4,7 +4,7 @@ pub mod games;
 
 use std::collections::hash_map::Keys;
 use crate::assets::ReloadManager;
-use crate::debug_input::handle_input;
+use crate::debug_input::handle_debug_input;
 use crate::games::racing::{control_cars, spawn_new_players};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, WindowResized};
@@ -171,9 +171,10 @@ fn main() {
         }))
         .add_systems(Startup, setup)
         .add_systems(First, grab_mouse)
-        .add_systems(Update, (process_messages, handle_input))
+        .add_systems(Update, process_messages)
         ;
     racing::init_app(&mut app);
+    debug_input::init(&mut app);
     app.run();
 }
 

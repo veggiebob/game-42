@@ -4,33 +4,38 @@ use crate::games::Player;
 use crate::games::racing::materials::race_rails::RailsMaterial;
 use crate::games::racing::materials::{MaterialOverride, MaterialOverrides};
 use crate::{PlayerInputs, PlayerMapping, RandomSource};
+use avian3d::PhysicsPlugins;
+use avian3d::prelude::{Collider, Physics, RigidBody};
 use bevy::app::{App, FixedUpdate, Startup};
-use bevy::gltf::GltfAssetLabel;
+use bevy::color::palettes::css::{ORANGE_RED, WHITE};
+use bevy::gltf::{GltfAssetLabel, GltfMaterialName};
 use bevy::math::{Quat, ShapeSample, vec3};
+use bevy::pbr::light_consts::lux::AMBIENT_DAYLIGHT;
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
-use bevy::prelude::{AssetServer, Assets, Camera3d, Circle, Color, Commands, Component, DirectionalLight, Entity, IntoScheduleConfigs, LinearRgba, Query, Res, ResMut, SceneRoot, Transform, Vec3, With, default, AlphaMode, info, Mesh, Sphere, Meshable, Mesh3d, AmbientLight, Trigger, Single, Name, Time, Fixed, Update};
+use bevy::prelude::{
+    AlphaMode, AmbientLight, AssetServer, Assets, Camera3d, Children, Circle, Color, Commands,
+    Component, DirectionalLight, Entity, Fixed, IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d,
+    Meshable, Name, Query, Res, ResMut, SceneRoot, Single, Sphere, Time, Transform, Trigger,
+    Update, Vec3, With, default, info,
+};
+use bevy::scene::SceneInstanceReady;
+use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::ButtonType;
 use materials::racetrack::RacetrackMaterial;
 use std::collections::HashSet;
 use std::f32::consts::PI;
-use avian3d::PhysicsPlugins;
-use avian3d::prelude::{Collider, Physics, RigidBody};
-use bevy::color::palettes::css::{ORANGE_RED, WHITE};
-use bevy::pbr::light_consts::lux::AMBIENT_DAYLIGHT;
-use bevy::scene::SceneInstanceReady;
-use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
+
+const COLLISION_MAT_NAME: &str = "collision";
 
 pub fn init_app(app: &mut App) {
-    app
-        .add_plugins(MaterialPlugin::<RacetrackMaterial>::default())
+    app.add_plugins(MaterialPlugin::<RacetrackMaterial>::default())
         .add_plugins(MaterialPlugin::<RailsMaterial>::default())
         .add_plugins(FlyCameraPlugin)
         .add_plugins(PhysicsPlugins::default())
         .add_systems(Startup, start_game.after(crate::setup))
         .add_systems(FixedUpdate, (control_cars, spawn_new_players))
         .add_systems(Update, step)
-        .add_observer(spawn_colliders)
-    ;
+        .add_observer(on_scene_load);
 }
 
 /// Marks that it belongs to this mini-game, so that it can be
@@ -40,11 +45,7 @@ pub struct RaceGameMarker;
 
 /// Racing game is a game where each player is a car, and they drive
 /// it around a track :)
-pub fn start_game(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-) {
-
+pub fn start_game(mut commands: Commands, asset_server: Res<AssetServer>) {
     // ambient lights do nothing??
     // commands.spawn((
     //     RaceGameMarker,
@@ -76,13 +77,13 @@ pub fn start_game(
         RaceGameMarker,
         SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"))),
     ));
-    
+
     commands.spawn((
         RigidBody::Static,
         Collider::cuboid(5., 0.5, 5.),
         Transform::from_xyz(0., -0.5, 0.),
-        ));
-    
+    ));
+
     commands.spawn((
         RigidBody::Dynamic,
         Collider::cuboid(1., 1., 1.),
@@ -93,21 +94,6 @@ pub fn start_game(
 
 fn step(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fixed>>) {
     physics_time.advance_by(fixed_time.delta());
-}
-
-pub fn spawn_colliders(
-    trigger: Trigger<SceneInstanceReady>,
-    mut commands: Commands,
-    gltf_things: Query<(&Name, &Mesh3d)>
-) {
-    // for (name, mesh) in gltf_things {
-    //     if name.as_str() == "track" {
-    //         commands.spawn((
-    //             RigidBody::Fixed,
-    //             ColliderBuilder::trimesh(mesh.0.)
-    //             ))
-    //     }
-    // }
 }
 
 pub fn spawn_new_players(
@@ -180,5 +166,29 @@ pub fn control_cars(
 pub fn shutdown_game(mut commands: Commands, objects: Query<Entity, With<RaceGameMarker>>) {
     for entity in objects {
         commands.entity(entity).despawn();
+    }
+}
+
+fn on_scene_load(
+    trigger: Trigger<SceneInstanceReady>,
+    mut commands: Commands,
+    gltf_children: Query<(&GltfMaterialName, &Transform)>,
+    children: Query<&Children>,
+) {
+    info!("Scene Instance Ready: {:?}", trigger.target());
+    for descendant in children
+        .iter_descendants(trigger.target())
+        .collect::<Vec<_>>()
+        .into_iter()
+    {
+        if let Ok((gltf_name, transform)) = gltf_children.get(descendant) {
+            // add collider to it
+            if gltf_name.0 == COLLISION_MAT_NAME {
+                commands
+                    .entity(descendant)
+                    .insert((RigidBody::Static, Collider::cuboid(5., 0.5, 5.)));
+                info!("inserted collider!")
+            }
+        }
     }
 }
