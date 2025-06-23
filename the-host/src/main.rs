@@ -1,11 +1,10 @@
 mod assets;
 mod debug_input;
 pub mod games;
+mod config;
 
 use std::collections::hash_map::Keys;
 use crate::assets::ReloadManager;
-use crate::debug_input::handle_debug_input;
-use crate::games::racing::{control_cars, spawn_new_players};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, WindowResized};
 use game_42_net::controls::{InputUpdate, PlayerInput};
@@ -20,6 +19,7 @@ use bevy::remote::http::RemoteHttpPlugin;
 use bevy::remote::RemotePlugin;
 use rand_chacha::rand_core::SeedableRng;
 use games::racing::materials::racetrack::RacetrackMaterial;
+use crate::config::{Config, ConfigAccessor, ConfigAssetLoaderError, ConfigLoader};
 
 #[derive(Resource)]
 pub(crate) struct RandomSource(rand_chacha::ChaCha8Rng);
@@ -41,6 +41,7 @@ type PlayerNum = u8;
 pub struct PlayerMapping(pub HashMap<PlayerNum, UserId>);
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    info!("Setting up The Host");
     // start the web server
     let (send_net, rx) = std::sync::mpsc::channel();
     let (tx, recv_net) = std::sync::mpsc::channel();
@@ -62,6 +63,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let seeded_rng = rand_chacha::ChaCha8Rng::seed_from_u64(1029301923);
     // let seeded_rng = ChaCha8Rng::from_os_rng();
     commands.insert_resource(RandomSource(seeded_rng));
+    
+    commands.insert_resource(ConfigAccessor {
+        handle: asset_server.load("config.json")
+    });
 }
 
 // handle player connections
@@ -172,6 +177,8 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(First, grab_mouse)
         .add_systems(Update, process_messages)
+        .init_asset::<Config>()
+        .init_asset_loader::<ConfigLoader>()
         ;
     racing::init_app(&mut app);
     debug_input::init(&mut app);

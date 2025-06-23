@@ -1,0 +1,13 @@
+{
+  "racing": {
+    "collision-gltf-mat-name": "collision",
+    "car-size": 0.3,
+    "car-friction": 0.0,
+    "car-restitution": 1.0,
+    "ground-friction": 0.2,
+    "ground-restitution": 0.5,
+    "max-speed": 100.0,
+    "acc-speed": 0.05,
+    "turn-speed": 0.05
+  }
+}

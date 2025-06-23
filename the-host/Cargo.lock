@@ -5320,6 +5320,8 @@ dependencies = [
  "rand",
  "rand_chacha",
  "serde",
+ "serde_json",
+ "thiserror 1.0.69",
  "tokio",
  "values_macro_derive",
 ]
