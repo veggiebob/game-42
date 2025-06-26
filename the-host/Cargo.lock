@@ -5319,6 +5319,7 @@ dependencies = [
  "qrcodegen",
  "rand",
  "rand_chacha",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -1,4 +1,4 @@
-pub mod materials;
+mod track;
 
 use crate::config::{
     Config, ConfigAccessor, ConfigPath, ConfigPathElem, ConfigType, ConfigValue, ConfigValueMap,
@@ -6,8 +6,6 @@ use crate::config::{
 };
 use crate::debug_input::{DebugPlayer, DebugPlayerInput};
 use crate::games::Player;
-use crate::games::racing::materials::race_rails::RailsMaterial;
-use crate::games::racing::materials::{MaterialOverride, MaterialOverrides};
 use crate::{PlayerInputs, PlayerMapping, RandomSource};
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::{
@@ -21,23 +19,23 @@ use bevy::log::warn;
 use bevy::math::{Quat, ShapeSample, vec3};
 use bevy::pbr::light_consts::lux::AMBIENT_DAYLIGHT;
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
-use bevy::prelude::{
-    AlphaMode, AmbientLight, AssetServer, Assets, Camera3d, Children, Circle, Color, Commands,
-    Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs, LinearRgba,
-    Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, SceneRoot, Single, Sphere,
-    Time, Transform, Trigger, Update, Vec3, With, Without, default, info,
-};
+use bevy::prelude::{AlphaMode, AmbientLight, AssetServer, Assets, Camera3d, Children, Circle, Color, Commands, Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, SceneRoot, Single, Sphere, Time, Transform, Trigger, Update, Vec3, With, Without, default, info, Scene, TransformHelper};
 use bevy::scene::SceneInstanceReady;
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::{ButtonType, PlayerInput};
-use materials::racetrack::RacetrackMaterial;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
+use avian3d::math::Quaternion;
+use bevy::asset::Handle;
+use bevy::render::mesh::MeshAabb;
+use regex::Regex;
 use values_macro_derive::EnumValues;
+use crate::games::racing::track::{Tether, Tragnet, TragnetAnchor};
 
 const GAME: &str = "racing";
 
 const COLLISION_MAT_NAME: &str = "collision";
+const TRAGNET_MAT_NAME: &str = "tragnet";
 const CAR_SIZE: &str = "car-size";
 const CAR_RESTITUTION: &str = "car-restitution";
 const CAR_FRICTION: &str = "car-friction";
@@ -46,6 +44,10 @@ const GROUND_RESTITUTION: &str = "ground-restitution";
 const MAX_SPEED: &str = "max-speed";
 const ACC_SPEED: &str = "acc-speed";
 const TURN_SPEED: &str = "turn-speed";
+const TRACK_RADIUS: &str = "track-radius";
+const TRAGNET_STRENGTH: &str = "tragnet-strength";
+const TRAGNET_STRENGTH_EXP: &str = "tragnet-strength-exp";
+const TRAGNET_K: &str = "tragnet-k";
 
 macro_rules! cfloat {
     ($config:expr, $i:expr) => {
@@ -56,6 +58,30 @@ macro_rules! cfloat {
             )
             .as_str(),
         ) as f32
+    };
+}
+
+macro_rules! cint {
+    ($config:expr, $i:expr) => {
+        $config[GAME][$i].as_i64().expect(
+            format!(
+                "Config value {} does not exist or isn't an i64.",
+                $i
+            )
+            .as_str(),
+        ) as i32
+    };
+}
+
+macro_rules! cusize {
+    ($config:expr, $i:expr) => {
+        $config[GAME][$i].as_u64().expect(
+            format!(
+                "Config value {} does not exist or isn't a u64.",
+                $i
+            )
+            .as_str(),
+        ) as usize
     };
 }
 
@@ -73,20 +99,28 @@ fn not_started(started: Res<Started>) -> bool {
     !started.0
 }
 
+#[derive(Resource)]
+struct SceneInfo {
+    handle: Handle<Scene>
+}
+
 pub fn init_app(app: &mut App) {
-    app.add_plugins(MaterialPlugin::<RacetrackMaterial>::default())
-        .add_plugins(MaterialPlugin::<RailsMaterial>::default())
+    app
         .add_plugins(FlyCameraPlugin)
         .add_plugins(PhysicsPlugins::default())
-        .insert_resource(Gravity(Vec3::NEG_Y * 20.0))
+        .insert_resource(Gravity(Vec3::NEG_Y * 5.0))
         .insert_resource(Started(false))
+        .insert_resource(SceneInfo { handle: Handle::default() })
         .add_systems(Update, start_game.run_if(not_started))
         .add_systems(
             FixedUpdate,
-            (control_cars, spawn_new_players).run_if(has_started),
+            (tragnet_players, spawn_new_players,
+                control_cars, orient_cars
+            ).run_if(has_started),
+            
         )
         .add_systems(Update, step.run_if(has_started))
-        // .add_observer(on_scene_load)
+        .add_observer(on_scene_load)
         // debug
         .add_systems(FixedUpdate, control_debug_car.run_if(has_started))
         .add_plugins(PhysicsDebugPlugin::default());
@@ -105,6 +139,7 @@ pub fn start_game(
     configs: Res<Assets<Config>>,
     config_resource: Res<ConfigAccessor>,
     mut started: ResMut<Started>,
+    mut scene_info: ResMut<SceneInfo>,
 ) {
     if started.0 {
         return;
@@ -130,19 +165,16 @@ pub fn start_game(
     //         color: WHITE.into()
     //     }
     // ));
-    // let config = asset_server.load("config/racing.json");
-    // let make_cv = |key, et| ConfigValue::new(ConfigPath::key(key, et), config.clone());
-    // let config_map = RacingConfig::values()
-    //     .map(|cfg| (cfg, make_cv(cfg.get_key(), cfg.get_expected_type())))
-    //     .collect();
-    // commands.spawn((RaceGameMarker, ConfigValueMap(config_map)));
 
+    // debug camera
     commands.spawn((
         RaceGameMarker,
         Camera3d::default(),
         FlyCamera::default(),
-        Transform::from_xyz(0., 5., 0.).looking_at(vec3(1., 0., 0.), Vec3::Y),
+        Transform::from_xyz(0., 3., 0.),
     ));
+
+    // sun as a light
     commands.spawn((
         RaceGameMarker,
         DirectionalLight {
@@ -154,15 +186,15 @@ pub fn start_game(
         Transform::from_xyz(0., 5., 0.).looking_at(vec3(-2., -2., 0.), vec3(0., 1., 0.)),
     ));
 
-    // commands.spawn((
-    //     RaceGameMarker,
-    //     SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"))),
-    // ));
+    // spawn the actual scene
+    let scene_handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"));
     commands.spawn((
         RaceGameMarker,
-        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/test.glb"))),
+        SceneRoot(scene_handle.clone()),
     ));
+    scene_info.handle = scene_handle;
 
+    // ground collider
     commands.spawn((
         RigidBody::Static,
         Friction::new(ground_friction),
@@ -171,17 +203,19 @@ pub fn start_game(
         Transform::from_xyz(0., -0.5, 0.),
     ));
 
-    // commands.spawn((
-    //     RigidBody::Dynamic,
-    //     DebugPlayer,
-    //     LockedAxes::new().lock_rotation_z(),
-    //     // MaxLinearSpeed(MAX_SPEED),
-    //     Friction::new(car_friction),
-    //     Restitution::new(car_restitution),
-    //     Collider::cuboid(0.5, 0.5, 1.),
-    //     Transform::from_xyz(0., 2., 0.).with_scale(Vec3::splat(car_size)),
-    //     SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"))),
-    // ));
+    // debug car
+    commands.spawn((
+        RaceGameMarker,
+        RigidBody::Dynamic,
+        DebugPlayer,
+        // MaxLinearSpeed(MAX_SPEED),
+        Friction::new(car_friction),
+        Restitution::new(car_restitution),
+        Collider::cuboid(0.5, 0.5, 1.),
+        Transform::from_xyz(0., 2., 0.).with_scale(Vec3::splat(car_size)),
+        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"))),
+        Tether::Lost
+    ));
 }
 
 fn update_colliders(
@@ -196,7 +230,8 @@ fn update_colliders(
         (Entity, &GlobalTransform, &DistanceSensitiveStaticCollider),
         Without<RigidBodyDisabled>,
     >,
-) {
+)
+{
     let mut pts = cars
         .into_iter()
         .map(|t| t.translation())
@@ -223,6 +258,56 @@ fn update_colliders(
 }
 fn step(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fixed>>) {
     physics_time.advance_by(fixed_time.delta());
+}
+
+// keep cars from going crazy
+
+fn tragnet_players(
+    tragnet: Single<&Tragnet>,
+    cars: Query<(&GlobalTransform, &mut LinearVelocity, &mut Tether), (With<RaceGameMarker>, With<Player>)>,
+    debug_car: Query<(&GlobalTransform, &mut LinearVelocity, &mut Tether), (With<RaceGameMarker>, With<DebugPlayer>, Without<Player>)>,
+    configs: Res<Assets<Config>>,
+    config_resource: Res<ConfigAccessor>,
+) {
+    let config = configs.get(&config_resource.handle).expect("no config!");
+    let track_radius = cfloat![config, TRACK_RADIUS];
+    let tragnet_strength = cfloat![config, TRAGNET_STRENGTH];
+    let tragnet_exp = cfloat![config, TRAGNET_STRENGTH_EXP];
+    let tragnet_k = cusize![config, TRAGNET_K];
+    let all_cars = cars.into_iter().chain(debug_car);
+    for (i, (transform, mut lv, mut tether)) in all_cars.enumerate() {
+        tragnet.update_tether(tether.as_mut(), transform.translation(), tragnet_k);
+        let target = tragnet.get_tether_transform(tether.as_ref());
+        let to_target = target.translation - transform.translation();
+        let to_target_dist = to_target.length();
+        let strength = f32::max((to_target_dist - track_radius).signum(), 0.0);
+        let tragnet_pull = to_target.normalize() * f32::powf(strength, tragnet_exp) * tragnet_strength;
+        if strength > 0.0 {
+            lv.0 *= tragnet_strength;
+        }
+        lv.0 += tragnet_pull;
+    }
+}
+
+fn orient_cars(
+    cars: Query<(&mut Transform, &mut LinearVelocity), (With<RaceGameMarker>, Without<DebugPlayer>, With<Player>)>,
+    debug_car: Query<(&mut Transform, &mut LinearVelocity), (With<RaceGameMarker>, With<DebugPlayer>, Without<Player>)>,
+) {
+    let all_cars = cars.into_iter().chain(debug_car);
+    for (mut transform, mut lv) in all_cars {
+        // rotate up y, and see how far it is from actual upright
+        let car_up = transform.rotation.mul_vec3(Vec3::Y);
+        let upright_angle = car_up.angle_between(Vec3::Y);
+        if upright_angle > PI / 4. {
+            let rotation = Quat::from_rotation_arc(car_up, Vec3::Y);
+            let correction = Quat::slerp(Quat::IDENTITY, rotation, 0.1);
+            transform.rotation = correction * transform.rotation;
+        }
+        
+        // make it actually go in the direction it's travelling
+        let speed = lv.0.dot(transform.forward().as_vec3());
+        lv.0 = speed * transform.forward().as_vec3();
+    }
 }
 
 fn spawn_new_players(
@@ -254,6 +339,7 @@ fn spawn_new_players(
             MaxLinearSpeed(max_speed),
             Collider::cuboid(1., 1., 1.),
             SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"))),
+            Tether::Lost
         ));
     }
 }
@@ -307,10 +393,11 @@ pub fn control_cars(
             let co = get_control_acc(pi, acc_speed, turn_speed);
             let rotate_right = Quat::from_rotation_y(PI / 2.);
             let forward = pos.forward();
-            linear_velocity.0 += Vec3::Z * co.acceleration * acc_speed;
+            linear_velocity.0 += forward * co.acceleration * acc_speed;
             pos.rotation = pos
                 .rotation
                 .rotate_towards(pos.rotation.mul_quat(rotate_right), co.turn);
+            // linear_velocity.0 = rotate_right.mul_vec3(linear_velocity.0);
         }
     }
 }
@@ -328,7 +415,7 @@ fn control_debug_car(
     let co = get_control_acc(&dpi.0, acc_speed, turn_speed);
     let rotate_right = Quat::from_rotation_y(PI / 2.);
     let forward = pos.rotation.mul_vec3(Vec3::Z);
-    linear_velocity.0 += Vec3::Z * co.acceleration;
+    linear_velocity.0 += forward * co.acceleration;
     pos.rotation = pos
         .rotation
         .rotate_towards(pos.rotation.mul_quat(rotate_right), co.turn);
@@ -344,19 +431,26 @@ pub fn shutdown_game(mut commands: Commands, objects: Query<Entity, With<RaceGam
 fn on_scene_load(
     trigger: Trigger<SceneInstanceReady>,
     mut commands: Commands,
-    gltf_children: Query<(&GltfMaterialName, &Transform, &Mesh3d, &Name)>,
+    gltf_children: Query<(&GltfMaterialName, &Mesh3d, &Name)>,
     meshes: Res<Assets<Mesh>>,
     children: Query<&Children>,
+    transform_helper: TransformHelper,
 ) {
     info!("Scene Instance Ready: {:?}", trigger.target());
+    let re = Regex::new(r"\d+").ok().unwrap();
+    let get_index_from_name = |name|
+        re.find(name)
+            .and_then(|m| m.as_str().parse::<usize>().ok());
+    let mut anchors = HashMap::new();
     for descendant in children
         .iter_descendants(trigger.target())
         .collect::<Vec<_>>()
         .into_iter()
     {
-        if let Ok((gltf_name, transform, mesh, name)) = gltf_children.get(descendant) {
+        if let Ok((gltf_name, mesh, name)) = gltf_children.get(descendant) {
             // add collider to it
             if gltf_name.0 == COLLISION_MAT_NAME {
+                // make it into a collider
                 if let Some(mesh) = meshes.get(&mesh.0) {
                     if let Some(collider) = Collider::convex_hull_from_mesh(mesh) {
                         commands
@@ -371,7 +465,26 @@ fn on_scene_load(
                         warn!("Unable to generate collider for {name}!",)
                     }
                 }
+            } 
+            else if gltf_name.0 == TRAGNET_MAT_NAME 
+            {
+                // add it to the tragnet
+                let index = get_index_from_name(name.as_str()).unwrap_or(0);
+                let transform = transform_helper.compute_global_transform(descendant).unwrap()
+                    .compute_transform();
+                anchors.insert(index, TragnetAnchor {
+                    transform: Transform::from_translation(transform.translation),
+                });
+                commands.entity(descendant)
+                    .remove::<Mesh3d>();
+                // info!("Adding to tragnet. Name is {}. Index {index} and transform {:?}", name.as_str(), transform);
             }
         }
+    }
+    let mut pts: Vec<_> = anchors.into_iter().collect();
+    if !pts.is_empty() {
+        pts.sort_by_key(|(i, _a)| *i);
+        let new_tragnet = Tragnet::new(pts.into_iter().map(|(_i, a)| a).collect());
+        commands.spawn((RaceGameMarker, new_tragnet));
     }
 }

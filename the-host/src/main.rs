@@ -18,7 +18,6 @@ use std::thread;
 use bevy::remote::http::RemoteHttpPlugin;
 use bevy::remote::RemotePlugin;
 use rand_chacha::rand_core::SeedableRng;
-use games::racing::materials::racetrack::RacetrackMaterial;
 use crate::config::{Config, ConfigAccessor, ConfigAssetLoaderError, ConfigLoader};
 
 #[derive(Resource)]
