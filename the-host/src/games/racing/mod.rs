@@ -6,31 +6,39 @@ use crate::config::{
 };
 use crate::debug_input::{DebugPlayer, DebugPlayerInput};
 use crate::games::Player;
+use crate::games::racing::track::{LapCounter, Tether, Tragnet, TragnetAnchor};
 use crate::{PlayerInputs, PlayerMapping, RandomSource};
 use avian3d::PhysicsPlugins;
+use avian3d::math::Quaternion;
 use avian3d::prelude::{
     Collider, Friction, Gravity, LinearVelocity, LockedAxes, MaxLinearSpeed, Physics,
     PhysicsDebugPlugin, Restitution, RigidBody, RigidBodyDisabled,
 };
 use bevy::app::{App, FixedUpdate, Startup};
+use bevy::asset::Handle;
 use bevy::color::palettes::css::{ORANGE_RED, WHITE};
 use bevy::gltf::{GltfAssetLabel, GltfMaterialName};
 use bevy::log::warn;
 use bevy::math::{Quat, ShapeSample, vec3};
 use bevy::pbr::light_consts::lux::AMBIENT_DAYLIGHT;
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
-use bevy::prelude::{AlphaMode, AmbientLight, AssetServer, Assets, Camera3d, Children, Circle, Color, Commands, Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, SceneRoot, Single, Sphere, Time, Transform, Trigger, Update, Vec3, With, Without, default, info, Scene, TransformHelper};
+use bevy::prelude::{
+    AlphaMode, AmbientLight, AssetServer, Assets, Bundle, Camera3d, Children, Circle, Color,
+    Commands, Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs,
+    LinearRgba, Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, Scene, SceneRoot,
+    Single, Sphere, Time, Transform, TransformHelper, Trigger, Update, Vec3, With, Without,
+    default, info,
+};
+use bevy::render::mesh::MeshAabb;
 use bevy::scene::SceneInstanceReady;
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::{ButtonType, PlayerInput};
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
-use avian3d::math::Quaternion;
-use bevy::asset::Handle;
-use bevy::render::mesh::MeshAabb;
-use regex::Regex;
 use values_macro_derive::EnumValues;
-use crate::games::racing::track::{Tether, Tragnet, TragnetAnchor};
+
+const RACE_CHECKPOINTS: usize = 3;
 
 const GAME: &str = "racing";
 
@@ -63,25 +71,19 @@ macro_rules! cfloat {
 
 macro_rules! cint {
     ($config:expr, $i:expr) => {
-        $config[GAME][$i].as_i64().expect(
-            format!(
-                "Config value {} does not exist or isn't an i64.",
-                $i
-            )
-            .as_str(),
-        ) as i32
+        $config[GAME][$i]
+            .as_i64()
+            .expect(format!("Config value {} does not exist or isn't an i64.", $i).as_str())
+            as i32
     };
 }
 
 macro_rules! cusize {
     ($config:expr, $i:expr) => {
-        $config[GAME][$i].as_u64().expect(
-            format!(
-                "Config value {} does not exist or isn't a u64.",
-                $i
-            )
-            .as_str(),
-        ) as usize
+        $config[GAME][$i]
+            .as_u64()
+            .expect(format!("Config value {} does not exist or isn't a u64.", $i).as_str())
+            as usize
     };
 }
 
@@ -99,27 +101,38 @@ fn not_started(started: Res<Started>) -> bool {
     !started.0
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct SceneInfo {
-    handle: Handle<Scene>
+    handle: Handle<Scene>,
+    car_handle: Handle<Scene>,
+    race_start: Transform,
+}
+
+#[derive(Resource)]
+struct GameStateInfo {
+    /// Checkpoints per lap. Must be >= 1
+    checkpoints: usize,
 }
 
 pub fn init_app(app: &mut App) {
-    app
-        .add_plugins(FlyCameraPlugin)
+    app.add_plugins(FlyCameraPlugin)
         .add_plugins(PhysicsPlugins::default())
-        .insert_resource(Gravity(Vec3::NEG_Y * 5.0))
+        .insert_resource(Gravity(Vec3::NEG_Y * 20.0))
+        .insert_resource(GameStateInfo { checkpoints: 3 })
         .insert_resource(Started(false))
-        .insert_resource(SceneInfo { handle: Handle::default() })
+        .insert_resource(SceneInfo::default())
         .add_systems(Update, start_game.run_if(not_started))
         .add_systems(
             FixedUpdate,
-            (tragnet_players, spawn_new_players,
-                control_cars, orient_cars
-            ).run_if(has_started),
-            
+            (
+                tragnet_players,
+                spawn_new_players,
+                control_cars,
+                orient_cars,
+            )
+                .run_if(has_started),
         )
-        .add_systems(Update, step.run_if(has_started))
+        .add_systems(Update, (step, print_debug_information, count_laps).run_if(has_started))
         .add_observer(on_scene_load)
         // debug
         .add_systems(FixedUpdate, control_debug_car.run_if(has_started))
@@ -187,11 +200,9 @@ pub fn start_game(
     ));
 
     // spawn the actual scene
-    let scene_handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"));
-    commands.spawn((
-        RaceGameMarker,
-        SceneRoot(scene_handle.clone()),
-    ));
+    let scene_handle =
+        asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"));
+    commands.spawn((RaceGameMarker, SceneRoot(scene_handle.clone())));
     scene_info.handle = scene_handle;
 
     // ground collider
@@ -203,18 +214,17 @@ pub fn start_game(
         Transform::from_xyz(0., -0.5, 0.),
     ));
 
+    let car_handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"));
+    scene_info.as_mut().car_handle = car_handle.clone();
     // debug car
     commands.spawn((
-        RaceGameMarker,
-        RigidBody::Dynamic,
         DebugPlayer,
-        // MaxLinearSpeed(MAX_SPEED),
-        Friction::new(car_friction),
-        Restitution::new(car_restitution),
-        Collider::cuboid(0.5, 0.5, 1.),
-        Transform::from_xyz(0., 2., 0.).with_scale(Vec3::splat(car_size)),
-        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"))),
-        Tether::Lost
+        car_bundle(
+            Transform::from_xyz(0., 2., 0.),
+            scene_info.as_ref(),
+            &configs,
+            &config_resource,
+        ),
     ));
 }
 
@@ -230,8 +240,7 @@ fn update_colliders(
         (Entity, &GlobalTransform, &DistanceSensitiveStaticCollider),
         Without<RigidBodyDisabled>,
     >,
-)
-{
+) {
     let mut pts = cars
         .into_iter()
         .map(|t| t.translation())
@@ -264,8 +273,14 @@ fn step(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fixed>>) {
 
 fn tragnet_players(
     tragnet: Single<&Tragnet>,
-    cars: Query<(&GlobalTransform, &mut LinearVelocity, &mut Tether), (With<RaceGameMarker>, With<Player>)>,
-    debug_car: Query<(&GlobalTransform, &mut LinearVelocity, &mut Tether), (With<RaceGameMarker>, With<DebugPlayer>, Without<Player>)>,
+    cars: Query<
+        (&GlobalTransform, &mut LinearVelocity, &mut Tether),
+        (With<RaceGameMarker>, With<Player>),
+    >,
+    debug_car: Query<
+        (&GlobalTransform, &mut LinearVelocity, &mut Tether),
+        (With<RaceGameMarker>, With<DebugPlayer>, Without<Player>),
+    >,
     configs: Res<Assets<Config>>,
     config_resource: Res<ConfigAccessor>,
 ) {
@@ -281,7 +296,8 @@ fn tragnet_players(
         let to_target = target.translation - transform.translation();
         let to_target_dist = to_target.length();
         let strength = f32::max((to_target_dist - track_radius).signum(), 0.0);
-        let tragnet_pull = to_target.normalize() * f32::powf(strength, tragnet_exp) * tragnet_strength;
+        let tragnet_pull =
+            to_target.normalize() * f32::powf(strength, tragnet_exp) * tragnet_strength;
         if strength > 0.0 {
             lv.0 *= tragnet_strength;
         }
@@ -290,8 +306,14 @@ fn tragnet_players(
 }
 
 fn orient_cars(
-    cars: Query<(&mut Transform, &mut LinearVelocity), (With<RaceGameMarker>, Without<DebugPlayer>, With<Player>)>,
-    debug_car: Query<(&mut Transform, &mut LinearVelocity), (With<RaceGameMarker>, With<DebugPlayer>, Without<Player>)>,
+    cars: Query<
+        (&mut Transform, &mut LinearVelocity),
+        (With<RaceGameMarker>, Without<DebugPlayer>, With<Player>),
+    >,
+    debug_car: Query<
+        (&mut Transform, &mut LinearVelocity),
+        (With<RaceGameMarker>, With<DebugPlayer>, Without<Player>),
+    >,
 ) {
     let all_cars = cars.into_iter().chain(debug_car);
     for (mut transform, mut lv) in all_cars {
@@ -303,43 +325,63 @@ fn orient_cars(
             let correction = Quat::slerp(Quat::IDENTITY, rotation, 0.1);
             transform.rotation = correction * transform.rotation;
         }
-        
+
         // make it actually go in the direction it's travelling
         let speed = lv.0.dot(transform.forward().as_vec3());
         lv.0 = speed * transform.forward().as_vec3();
     }
 }
 
+fn car_bundle(
+    transform: Transform,
+    scene_info: &SceneInfo,
+    configs: &Res<Assets<Config>>,
+    config_resource: &Res<ConfigAccessor>,
+) -> impl Bundle {
+    let config = configs.get(&config_resource.handle).expect("no config!");
+    let car_friction = cfloat![config, CAR_FRICTION];
+    let car_size = cfloat![config, CAR_SIZE];
+    let car_restitution = cfloat![config, CAR_RESTITUTION];
+    (
+        RaceGameMarker,
+        RigidBody::Dynamic,
+        Friction::new(car_friction),
+        Restitution::new(car_restitution),
+        Collider::cuboid(0.5, 0.5, 1.),
+        transform.with_scale(Vec3::splat(car_size)),
+        SceneRoot(scene_info.car_handle.clone()),
+        Tether::Lost,
+        LapCounter::at_start(RACE_CHECKPOINTS),
+    )
+}
 fn spawn_new_players(
     mut commands: Commands,
     mut random_source: ResMut<RandomSource>,
-    asset_server: Res<AssetServer>,
     cars: Query<&Player, With<RaceGameMarker>>,
     player_mapping: Res<PlayerMapping>,
     configs: Res<Assets<Config>>,
     config_resource: Res<ConfigAccessor>,
+    scene_info: Res<SceneInfo>,
 ) {
     let config = configs.get(&config_resource.handle).expect("no config!");
-    let car_friction = cfloat![config, CAR_FRICTION];
-    let max_speed = cfloat![config, MAX_SPEED];
-    let car_size = cfloat![config, CAR_SIZE];
+    let track_radius = cfloat![config, TRACK_RADIUS];
     let car_players: HashSet<_> = cars.into_iter().map(|x| x.0).collect();
     let players_without_cars = player_mapping
         .get_players()
         .filter(|p| !car_players.contains(p));
-    let spawn_area = Circle::new(3.);
+    let spawn_area = Circle::new(track_radius);
     for player in players_without_cars {
         let pos = spawn_area.sample_interior(&mut random_source.0);
+        let mut spawn_transform = scene_info.race_start;
+        spawn_transform.translation += vec3(pos.x, 0.0, pos.y);
         commands.spawn((
-            RaceGameMarker,
             Player(*player),
-            Transform::from_xyz(pos.x, 5.0, pos.y).with_scale(Vec3::splat(car_size)),
-            RigidBody::Dynamic,
-            Friction::new(car_friction),
-            MaxLinearSpeed(max_speed),
-            Collider::cuboid(1., 1., 1.),
-            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"))),
-            Tether::Lost
+            car_bundle(
+                spawn_transform,
+                scene_info.as_ref(),
+                &configs,
+                &config_resource,
+            ),
         ));
     }
 }
@@ -376,10 +418,7 @@ pub fn control_cars(
     player_inputs: Res<PlayerInputs>,
     player_mapping: Res<PlayerMapping>,
 ) {
-    // let acc_speed: f32 = configs.get_config_value(&config[&RacingConfig::AccSpeed]);
-    // let acc_speed: f32 = 1.0;
     let config = configs.get(&config_resource.handle).expect("no config!");
-    // let acc_speed = cfloat!(config, ACC_SPEED);
     let acc_speed = config[GAME][ACC_SPEED].as_f64().expect("beep beep") as f32;
     let turn_speed = cfloat![config, TURN_SPEED];
     for (mut pos, player, mut linear_velocity) in cars {
@@ -392,8 +431,8 @@ pub fn control_cars(
         {
             let co = get_control_acc(pi, acc_speed, turn_speed);
             let rotate_right = Quat::from_rotation_y(PI / 2.);
-            let forward = pos.forward();
-            linear_velocity.0 += forward * co.acceleration * acc_speed;
+            let forward = pos.rotation.mul_vec3(Vec3::Z);
+            linear_velocity.0 += forward * co.acceleration;
             pos.rotation = pos
                 .rotation
                 .rotate_towards(pos.rotation.mul_quat(rotate_right), co.turn);
@@ -412,13 +451,20 @@ fn control_debug_car(
     let acc_speed = cfloat![config, ACC_SPEED];
     let turn_speed = cfloat![config, TURN_SPEED];
     let (mut pos, mut linear_velocity) = debug_car.into_inner();
-    let co = get_control_acc(&dpi.0, acc_speed, turn_speed);
+    let co = get_control_acc(&dpi.player_input, acc_speed, turn_speed);
     let rotate_right = Quat::from_rotation_y(PI / 2.);
     let forward = pos.rotation.mul_vec3(Vec3::Z);
     linear_velocity.0 += forward * co.acceleration;
     pos.rotation = pos
         .rotation
         .rotate_towards(pos.rotation.mul_quat(rotate_right), co.turn);
+}
+
+fn count_laps(tethered_things: Query<(&Tether, &mut LapCounter)>, tragnet: Single<&Tragnet>) {
+    for (tether, mut counter) in tethered_things {
+        let current_sector = tragnet.get_current_sector(tether);
+        counter.update_sector(current_sector);
+    }
 }
 
 /// Despawn all the entities that have a RaceGameMarker
@@ -435,12 +481,11 @@ fn on_scene_load(
     meshes: Res<Assets<Mesh>>,
     children: Query<&Children>,
     transform_helper: TransformHelper,
+    mut scene_info: ResMut<SceneInfo>,
 ) {
     info!("Scene Instance Ready: {:?}", trigger.target());
     let re = Regex::new(r"\d+").ok().unwrap();
-    let get_index_from_name = |name|
-        re.find(name)
-            .and_then(|m| m.as_str().parse::<usize>().ok());
+    let get_index_from_name = |name| re.find(name).and_then(|m| m.as_str().parse::<usize>().ok());
     let mut anchors = HashMap::new();
     for descendant in children
         .iter_descendants(trigger.target())
@@ -465,18 +510,20 @@ fn on_scene_load(
                         warn!("Unable to generate collider for {name}!",)
                     }
                 }
-            } 
-            else if gltf_name.0 == TRAGNET_MAT_NAME 
-            {
+            } else if gltf_name.0 == TRAGNET_MAT_NAME {
                 // add it to the tragnet
                 let index = get_index_from_name(name.as_str()).unwrap_or(0);
-                let transform = transform_helper.compute_global_transform(descendant).unwrap()
+                let transform = transform_helper
+                    .compute_global_transform(descendant)
+                    .unwrap()
                     .compute_transform();
-                anchors.insert(index, TragnetAnchor {
-                    transform: Transform::from_translation(transform.translation),
-                });
-                commands.entity(descendant)
-                    .remove::<Mesh3d>();
+                anchors.insert(
+                    index,
+                    TragnetAnchor {
+                        transform: Transform::from_translation(transform.translation),
+                    },
+                );
+                commands.entity(descendant).remove::<Mesh3d>();
                 // info!("Adding to tragnet. Name is {}. Index {index} and transform {:?}", name.as_str(), transform);
             }
         }
@@ -484,7 +531,26 @@ fn on_scene_load(
     let mut pts: Vec<_> = anchors.into_iter().collect();
     if !pts.is_empty() {
         pts.sort_by_key(|(i, _a)| *i);
-        let new_tragnet = Tragnet::new(pts.into_iter().map(|(_i, a)| a).collect());
+        let scene_info = scene_info.as_mut();
+        scene_info.race_start = pts[0].1.transform.clone();
+        let new_tragnet =
+            Tragnet::new(pts.into_iter().map(|(_i, a)| a).collect(), RACE_CHECKPOINTS);
         commands.spawn((RaceGameMarker, new_tragnet));
+    }
+}
+
+fn print_debug_information(
+    mut debug_player_input: ResMut<DebugPlayerInput>,
+    lap_things: Query<(Option<&Name>, &Tether, &LapCounter)>,
+    tragnet: Single<&Tragnet>,
+) {
+    if debug_player_input.button_1.just_pressed() {
+        info!("-----debug-start-----");
+        for (name, tether, counter) in lap_things.iter() {
+            let name = name.map(|s| s.as_str()).unwrap_or("unnamed");
+            let current_sector = tragnet.get_current_sector(tether);
+            info!("{name}: lap={}, sector={}, current sector={}", counter.lap(), counter.sector(), current_sector);
+        }
+        info!("-----debug-end-----");
     }
 }

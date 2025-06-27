@@ -1,19 +1,36 @@
 use bevy::math::Vec3;
 use bevy::prelude::{Component, Transform};
 
+/// Which lap you're on (starts at 0)
+pub type Lap = usize;
+/// Which sector on the race track you're on (starts at 0)
+pub type Sector = usize;
+
 #[derive(Component)]
 pub enum Tether {
     Anchor(AnchorId),
     Lost
 }
 
+#[derive(Component)]
+pub struct LapCounter {
+    lap: Lap,
+    sector: Sector,
+    checkpoints: usize
+}
+
 #[derive(Copy, Clone)]
 pub struct AnchorId(usize);
 
-// circular buffer of points
+/// Portmanteau of "track" and "magnet"
+/// Collection of points ("anchors") along the center line of the track
+/// that are used to keep cars from going outside the track.
 #[derive(Component)]
 pub struct Tragnet {
-    points: Vec<TragnetAnchor>
+    /// These act as a circular buffer
+    points: Vec<TragnetAnchor>,
+    /// How many checkpoints there are
+    checkpoints: usize,
 }
 
 #[derive(Debug)]
@@ -22,9 +39,18 @@ pub struct TragnetAnchor {
 }
 
 impl Tragnet {
-    pub fn new(points: Vec<TragnetAnchor>) -> Tragnet {
+    pub fn new(points: Vec<TragnetAnchor>, num_checkpoints: usize) -> Tragnet {
         Tragnet {
-            points
+            points,
+            checkpoints: num_checkpoints,
+        }
+    }
+    
+    pub fn get_current_sector(&self, tether: &Tether) -> Sector {
+        if let Tether::Anchor(anchor_id) = tether {
+            (anchor_id.0 as f32 / self.points.len() as f32 * self.checkpoints as f32) as usize
+        } else {
+            0
         }
     }
 
@@ -76,6 +102,31 @@ impl Tragnet {
             self.points[anchor_id.0].transform.clone()
         } else {
             panic!("Tether is lost!");
+        }
+    }
+}
+
+impl LapCounter {
+    pub fn at_start(num_checkpoints: usize) -> LapCounter {
+        LapCounter {
+            lap: 0,
+            sector: 0,
+            checkpoints: num_checkpoints,
+        }
+    }
+    pub fn lap(&self) -> Lap {
+        self.lap
+    }
+    pub fn sector(&self) -> Sector {
+        self.sector
+    }
+    pub fn update_sector(&mut self, sector: Sector) {
+        if sector == (self.sector + 1) % self.checkpoints {
+            self.sector += 1;
+            if self.sector == self.checkpoints {
+                self.sector = 0;
+                self.lap += 1;
+            }
         }
     }
 }

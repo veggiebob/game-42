@@ -3,7 +3,7 @@ use values_macro_derive::{EnumValues, Mapping};
 use serde::{Deserialize, Serialize};
 
 /// Identifies a button
-#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone)]
+#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ButtonType {
     A,
     B,
@@ -16,7 +16,7 @@ pub enum ButtonType {
 }
 
 /// Identifies which axis it is (a traditional joystick has 2 axes, X and Y).
-#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone)]
+#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum JoystickAxis {
     LeftX,
     LeftY,
@@ -30,6 +30,7 @@ pub struct PlayerInput {
     joysticks: JoystickAxisMapping<JoystickState>,
 }
 
+#[derive(Default)]
 pub struct ButtonState {
     pressed: bool,
     just_pressed: bool,
@@ -49,7 +50,7 @@ pub enum InputUpdate {
 impl PlayerInput {
     pub fn new() -> Self {
         PlayerInput {
-            buttons: ButtonTypeMapping::new(|_b| ButtonState::new()),
+            buttons: ButtonTypeMapping::new(|_b| ButtonState::default()),
             joysticks: JoystickAxisMapping::new(|_j| JoystickState::new()),
         }
     }
@@ -67,14 +68,6 @@ impl PlayerInput {
     }
 }
 impl ButtonState {
-    pub fn new() -> Self {
-        ButtonState {
-            pressed: false,
-            just_pressed: false,
-            just_released: false,
-        }
-    }
-
     pub fn update(&mut self, pressed: bool) {
         // persist value until consumed or un-pressed
         self.just_pressed = (!self.pressed || self.just_pressed) && pressed;
