@@ -4,7 +4,6 @@ pub mod games;
 mod config;
 
 use std::collections::hash_map::Keys;
-use crate::assets::ReloadManager;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, WindowResized};
 use game_42_net::controls::{InputUpdate, PlayerInput};
@@ -55,9 +54,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(PlayerInputs(HashMap::new()));
     commands.insert_resource(PlayerMapping(HashMap::new()));
     
-    // frontend bevy stuff
-    commands.insert_resource(ReloadManager::new());
-
     // https://bevyengine.org/examples/math/random-sampling/
     let seeded_rng = rand_chacha::ChaCha8Rng::seed_from_u64(1029301923);
     // let seeded_rng = ChaCha8Rng::from_os_rng();
@@ -96,14 +92,11 @@ fn process_messages(
                     disconnected.unwrap()
                 );
                 // despawn something here?
-                match pi.remove(&msg.user_id) {
-                    None => {
-                        error!(
-                            "Player {} disconnected but had no controls to begin with.",
-                            msg.user_id
-                        );
-                    }
-                    _ => {}
+                if let None = pi.remove(&msg.user_id) {
+                    error!(
+                        "Player {} disconnected but had no controls to begin with.",
+                        msg.user_id
+                    );
                 }
             }
             Packet::Client(packet) => {
@@ -186,13 +179,14 @@ fn main() {
 
 impl PlayerMapping {
     pub fn connect_lowest_num(&mut self, user_id: &UserId) -> PlayerNum {
-        let mut min = self.0.keys().min().map(|x| *x).unwrap_or(1);
+        let mut min = 1;
         while self.0.contains_key(&min) {
             min += 1;
         }
-        self.0.insert(min, user_id.clone());
+        self.0.insert(min, *user_id);
         min
     }
+    
     pub fn remove(&mut self, user_id: &UserId) -> Option<PlayerNum> {
         if let Some((&player_num, _uid)) = self.0.iter().find(|(k, v)| v == &user_id) {
             self.0.remove(&player_num);

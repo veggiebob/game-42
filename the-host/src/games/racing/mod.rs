@@ -1,4 +1,6 @@
 mod track;
+mod scene;
+mod style;
 
 use crate::config::{
     Config, ConfigAccessor, ConfigPath, ConfigPathElem, ConfigType, ConfigValue, ConfigValueMap,
@@ -22,13 +24,7 @@ use bevy::log::warn;
 use bevy::math::{Quat, ShapeSample, vec3};
 use bevy::pbr::light_consts::lux::AMBIENT_DAYLIGHT;
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
-use bevy::prelude::{
-    AlphaMode, AmbientLight, AssetServer, Assets, Bundle, Camera3d, Children, Circle, Color,
-    Commands, Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs,
-    LinearRgba, Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, Scene, SceneRoot,
-    Single, Sphere, Time, Transform, TransformHelper, Trigger, Update, Vec3, With, Without,
-    default, info,
-};
+use bevy::prelude::{AlphaMode, AmbientLight, AssetServer, Assets, Bundle, Camera3d, Children, Circle, Color, Commands, Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, Scene, SceneRoot, Single, Sphere, Time, Transform, TransformHelper, Trigger, Update, Vec3, With, Without, default, info, Hsla};
 use bevy::render::mesh::MeshAabb;
 use bevy::scene::SceneInstanceReady;
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
@@ -36,7 +32,10 @@ use game_42_net::controls::{ButtonType, PlayerInput};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
+use bevy::text::cosmic_text::ttf_parser::colr::CompositeMode;
 use values_macro_derive::EnumValues;
+use crate::games::racing::scene::on_scene_load;
+use crate::games::racing::style::CarStyle;
 
 const RACE_CHECKPOINTS: usize = 3;
 
@@ -127,6 +126,7 @@ pub fn init_app(app: &mut App) {
             (
                 tragnet_players,
                 spawn_new_players,
+                despawn_disconnected_players,
                 control_cars,
                 orient_cars,
             )
@@ -224,6 +224,7 @@ pub fn start_game(
             scene_info.as_ref(),
             &configs,
             &config_resource,
+            Color::BLACK
         ),
     ));
 }
@@ -337,6 +338,7 @@ fn car_bundle(
     scene_info: &SceneInfo,
     configs: &Res<Assets<Config>>,
     config_resource: &Res<ConfigAccessor>,
+    color: Color,
 ) -> impl Bundle {
     let config = configs.get(&config_resource.handle).expect("no config!");
     let car_friction = cfloat![config, CAR_FRICTION];
@@ -352,6 +354,7 @@ fn car_bundle(
         SceneRoot(scene_info.car_handle.clone()),
         Tether::Lost,
         LapCounter::at_start(RACE_CHECKPOINTS),
+        CarStyle::new(color),
     )
 }
 fn spawn_new_players(
@@ -365,24 +368,37 @@ fn spawn_new_players(
 ) {
     let config = configs.get(&config_resource.handle).expect("no config!");
     let track_radius = cfloat![config, TRACK_RADIUS];
-    let car_players: HashSet<_> = cars.into_iter().map(|x| x.0).collect();
-    let players_without_cars = player_mapping
-        .get_players()
-        .filter(|p| !car_players.contains(p));
     let spawn_area = Circle::new(track_radius);
-    for player in players_without_cars {
-        let pos = spawn_area.sample_interior(&mut random_source.0);
-        let mut spawn_transform = scene_info.race_start;
-        spawn_transform.translation += vec3(pos.x, 0.0, pos.y);
-        commands.spawn((
-            Player(*player),
-            car_bundle(
-                spawn_transform,
-                scene_info.as_ref(),
-                &configs,
-                &config_resource,
-            ),
-        ));
+    let spawned_cars: HashSet<_> = cars.into_iter()
+        .map(|p| p.0).collect();
+    for player in player_mapping.0.keys() {
+        if !spawned_cars.contains(player) {
+            let pos = spawn_area.sample_interior(&mut random_source.0);
+            let mut spawn_transform = scene_info.race_start;
+            spawn_transform.translation += vec3(pos.x, 0.0, pos.y);
+            commands.spawn((
+                Player(*player),
+                car_bundle(
+                    spawn_transform,
+                    scene_info.as_ref(),
+                    &configs,
+                    &config_resource,
+                    Color::Hsla(Hsla::hsl((65. * *player as f32) % 360., 1.0, 0.5))
+                ),
+            ));
+        }
+    }
+}
+
+fn despawn_disconnected_players(
+    mut commands: Commands,
+    cars: Query<(Entity, &Player), With<RaceGameMarker>>,
+    player_mapping: Res<PlayerMapping>,
+) {
+    for (entity, player) in cars {
+        if !player_mapping.0.contains_key(&player.0) {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -471,71 +487,6 @@ fn count_laps(tethered_things: Query<(&Tether, &mut LapCounter)>, tragnet: Singl
 pub fn shutdown_game(mut commands: Commands, objects: Query<Entity, With<RaceGameMarker>>) {
     for entity in objects {
         commands.entity(entity).despawn();
-    }
-}
-
-fn on_scene_load(
-    trigger: Trigger<SceneInstanceReady>,
-    mut commands: Commands,
-    gltf_children: Query<(&GltfMaterialName, &Mesh3d, &Name)>,
-    meshes: Res<Assets<Mesh>>,
-    children: Query<&Children>,
-    transform_helper: TransformHelper,
-    mut scene_info: ResMut<SceneInfo>,
-) {
-    info!("Scene Instance Ready: {:?}", trigger.target());
-    let re = Regex::new(r"\d+").ok().unwrap();
-    let get_index_from_name = |name| re.find(name).and_then(|m| m.as_str().parse::<usize>().ok());
-    let mut anchors = HashMap::new();
-    for descendant in children
-        .iter_descendants(trigger.target())
-        .collect::<Vec<_>>()
-        .into_iter()
-    {
-        if let Ok((gltf_name, mesh, name)) = gltf_children.get(descendant) {
-            // add collider to it
-            if gltf_name.0 == COLLISION_MAT_NAME {
-                // make it into a collider
-                if let Some(mesh) = meshes.get(&mesh.0) {
-                    if let Some(collider) = Collider::convex_hull_from_mesh(mesh) {
-                        commands
-                            .entity(descendant)
-                            .insert((
-                                RigidBody::Static,
-                                DistanceSensitiveStaticCollider { distance: 2.0 },
-                            ))
-                            .remove::<Mesh3d>()
-                            .insert(collider);
-                    } else {
-                        warn!("Unable to generate collider for {name}!",)
-                    }
-                }
-            } else if gltf_name.0 == TRAGNET_MAT_NAME {
-                // add it to the tragnet
-                let index = get_index_from_name(name.as_str()).unwrap_or(0);
-                let transform = transform_helper
-                    .compute_global_transform(descendant)
-                    .unwrap()
-                    .compute_transform();
-                anchors.insert(
-                    index,
-                    TragnetAnchor {
-                        transform: Transform::from_translation(transform.translation),
-                    },
-                );
-                commands.entity(descendant).remove::<Mesh3d>();
-                // info!("Adding to tragnet. Name is {}. Index {index} and transform {:?}", name.as_str(), transform);
-            }
-        }
-    }
-    let mut pts: Vec<_> = anchors.into_iter().collect();
-    if !pts.is_empty() {
-        pts.sort_by_key(|(i, _a)| *i);
-        let scene_info = scene_info.as_mut();
-        scene_info.race_start = pts[0].1.transform.clone();
-        let new_tragnet =
-            Tragnet::new(pts.into_iter().map(|(_i, a)| a).collect(), RACE_CHECKPOINTS);
-        commands.spawn((RaceGameMarker, new_tragnet));
     }
 }
 

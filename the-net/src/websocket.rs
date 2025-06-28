@@ -32,17 +32,14 @@ pub(crate) async fn handle_socket(
     let uid = users.lock().map(|mut users| {
         users.add_next()
     }).unwrap();
-    match to_host.send(AnnotatedClientPacket {
+    if let Err(e) = to_host.send(AnnotatedClientPacket {
         user_id: uid,
         packet: Packet::Connected,
     }) {
-        Err(e) => {
-            error!("Error while sending connection message: {e:?}");
-            return Ok(())
-        }
-        Ok(_) => {}
+        error!("Error while sending connection message: {e:?}");
+        return Err(Error::ConnectionClosed)
     }
-    let (mut sender, mut receiver) = channel.split();
+    let (sender, mut receiver) = channel.split();
     let receive_task: JoinHandle<Result<(), ClientStreamError>> = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
@@ -81,14 +78,11 @@ pub(crate) async fn handle_socket(
         // _ = send_task => info!("Channel closed from sender end"),
     }
 
-    match dis_host.send(AnnotatedClientPacket {
+    if let Err(e) = dis_host.send(AnnotatedClientPacket {
         user_id: uid,
         packet: Packet::Disconnected,
     }) {
-        Err(e) => {
-            error!("Error while sending disconnect message: {e:?}");
-        }
-        Ok(_) => {}
+        error!("Error while sending disconnect message: {e:?}");
     }
 
     Ok(())

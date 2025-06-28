@@ -28,7 +28,7 @@ impl Users {
         while self.connected.contains(&uid) {
             uid.0 += 1;
         }
-        self.connected.insert(uid.clone());
+        self.connected.insert(uid);
         uid
     }
 }
