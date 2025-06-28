@@ -1,17 +1,18 @@
-mod track;
 mod scene;
 mod style;
+mod track;
 
 use crate::config::{
     Config, ConfigAccessor, ConfigPath, ConfigPathElem, ConfigType, ConfigValue, ConfigValueMap,
     GetConfig,
 };
 use crate::debug_input::{DebugPlayer, DebugPlayerInput};
-use crate::games::Player;
+use crate::games::racing::scene::on_scene_load;
+use crate::games::racing::style::CarStyle;
 use crate::games::racing::track::{LapCounter, Tether, Tragnet, TragnetAnchor};
+use crate::games::{ConfigLoadState, CurrentGame, GamePhase, Player};
 use crate::{PlayerInputs, PlayerMapping, RandomSource};
 use avian3d::PhysicsPlugins;
-use avian3d::math::Quaternion;
 use avian3d::prelude::{
     Collider, Friction, Gravity, LinearVelocity, LockedAxes, MaxLinearSpeed, Physics,
     PhysicsDebugPlugin, Restitution, RigidBody, RigidBodyDisabled,
@@ -20,29 +21,34 @@ use bevy::app::{App, FixedUpdate, Startup};
 use bevy::asset::Handle;
 use bevy::color::palettes::css::{ORANGE_RED, WHITE};
 use bevy::gltf::{GltfAssetLabel, GltfMaterialName};
-use bevy::log::warn;
 use bevy::math::{Quat, ShapeSample, vec3};
-use bevy::pbr::light_consts::lux::AMBIENT_DAYLIGHT;
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
-use bevy::prelude::{AlphaMode, AmbientLight, AssetServer, Assets, Bundle, Camera3d, Children, Circle, Color, Commands, Component, DirectionalLight, Entity, Fixed, GlobalTransform, IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d, Meshable, Name, Or, Query, Res, ResMut, Resource, Scene, SceneRoot, Single, Sphere, Time, Transform, TransformHelper, Trigger, Update, Vec3, With, Without, default, info, Hsla};
-use bevy::render::mesh::MeshAabb;
-use bevy::scene::SceneInstanceReady;
+use bevy::prelude::{
+    AlphaMode, AmbientLight, AssetServer, Assets, Bundle, Camera3d, Children, Circle, Color,
+    Commands, Component, ComputedStates, DirectionalLight, Entity, Fixed, GlobalTransform, Hsla,
+    IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d, Meshable, Name, OnEnter, OnExit, Or, Query, Res,
+    ResMut, Resource, Scene, SceneRoot, Single, Sphere, Time, Transform, TransformHelper, Trigger,
+    Update, Vec3, With, Without, default, in_state, info,
+};
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::{ButtonType, PlayerInput};
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
-use bevy::text::cosmic_text::ttf_parser::colr::CompositeMode;
-use values_macro_derive::EnumValues;
-use crate::games::racing::scene::on_scene_load;
-use crate::games::racing::style::CarStyle;
 
+// The first few sections before the "GAME" section should probably
+// be replicated for other games. I haven't figured out how to abstract
+// them yet and I don't care (yet).
+
+// --- SPECIAL CONSTANTS ---
+// these are constants that don't really need to be hot reloaded or anything
+// because they change very infrequently
 const RACE_CHECKPOINTS: usize = 3;
-
-const GAME: &str = "racing";
-
 const COLLISION_MAT_NAME: &str = "collision";
 const TRAGNET_MAT_NAME: &str = "tragnet";
+pub const CAR_BODY_MAT_NAME: &str = "body";
+
+// --- CONFIG FILE CONSTANTS ---
+const GAME: &str = "racing"; // top-level name of game in config file
 const CAR_SIZE: &str = "car-size";
 const CAR_RESTITUTION: &str = "car-restitution";
 const CAR_FRICTION: &str = "car-friction";
@@ -55,6 +61,8 @@ const TRACK_RADIUS: &str = "track-radius";
 const TRAGNET_STRENGTH: &str = "tragnet-strength";
 const TRAGNET_STRENGTH_EXP: &str = "tragnet-strength-exp";
 const TRAGNET_K: &str = "tragnet-k";
+
+// --- CONFIG FILE MACROS ---
 
 macro_rules! cfloat {
     ($config:expr, $i:expr) => {
@@ -86,29 +94,71 @@ macro_rules! cusize {
     };
 }
 
-#[derive(Component)]
-struct DistanceSensitiveStaticCollider {
-    distance: f32,
+// --- GAME STATE ---
+
+// I will use these computed states instead of the global states
+// to manage gameplay correctly.
+
+/// this is analogous to the PreGame state
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+struct PreRacing;
+
+/// This is analogous to the Playing state
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+struct PlayingRacing;
+
+/// This is analogous to the PostGame state
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+struct PostRacing;
+
+impl ComputedStates for PreRacing {
+    type SourceStates = (ConfigLoadState, CurrentGame, GamePhase);
+
+    fn compute(sources: Self::SourceStates) -> Option<Self> {
+        match sources {
+            (ConfigLoadState::Loaded, CurrentGame::Racing, GamePhase::PreGame) => Some(Self),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Resource)]
-struct Started(bool);
-fn has_started(started: Res<Started>) -> bool {
-    started.0
+impl ComputedStates for PlayingRacing {
+    type SourceStates = (ConfigLoadState, CurrentGame, GamePhase);
+
+    fn compute(sources: Self::SourceStates) -> Option<Self> {
+        match sources {
+            (ConfigLoadState::Loaded, CurrentGame::Racing, GamePhase::PlayingGame) => Some(Self),
+            _ => None,
+        }
+    }
 }
-fn not_started(started: Res<Started>) -> bool {
-    !started.0
+
+impl ComputedStates for PostRacing {
+    type SourceStates = (ConfigLoadState, CurrentGame, GamePhase);
+
+    fn compute(sources: Self::SourceStates) -> Option<Self> {
+        match sources {
+            (ConfigLoadState::Loaded, CurrentGame::Racing, GamePhase::PostGame) => Some(Self),
+            _ => None,
+        }
+    }
 }
+
+// --- GAME ---
+
+/// goes with the track scene
+#[derive(Component)]
+struct RacingSceneMarker;
 
 #[derive(Resource, Default)]
 struct SceneInfo {
-    handle: Handle<Scene>,
+    scene_handle: Handle<Scene>,
     car_handle: Handle<Scene>,
     race_start: Transform,
 }
 
 #[derive(Resource)]
-struct GameStateInfo {
+struct GameInfo {
     /// Checkpoints per lap. Must be >= 1
     checkpoints: usize,
 }
@@ -116,11 +166,12 @@ struct GameStateInfo {
 pub fn init_app(app: &mut App) {
     app.add_plugins(FlyCameraPlugin)
         .add_plugins(PhysicsPlugins::default())
+        .add_plugins(PhysicsDebugPlugin::default()) // to be removed
         .insert_resource(Gravity(Vec3::NEG_Y * 20.0))
-        .insert_resource(GameStateInfo { checkpoints: 3 })
-        .insert_resource(Started(false))
+        .insert_resource(GameInfo { checkpoints: 3 })
         .insert_resource(SceneInfo::default())
-        .add_systems(Update, start_game.run_if(not_started))
+        .add_systems(OnEnter(PreRacing), start_game)
+        .add_observer(on_scene_load) // this actually starts the game
         .add_systems(
             FixedUpdate,
             (
@@ -129,14 +180,16 @@ pub fn init_app(app: &mut App) {
                 despawn_disconnected_players,
                 control_cars,
                 orient_cars,
+                control_debug_car, // to be removed
             )
-                .run_if(has_started),
+                .run_if(in_state(PlayingRacing)),
         )
-        .add_systems(Update, (step, print_debug_information, count_laps).run_if(has_started))
-        .add_observer(on_scene_load)
-        // debug
-        .add_systems(FixedUpdate, control_debug_car.run_if(has_started))
-        .add_plugins(PhysicsDebugPlugin::default());
+        .add_systems(
+            Update,
+            (step, print_debug_information, count_laps).run_if(in_state(PlayingRacing)),
+        )
+        .add_systems(OnExit(PostRacing), shutdown_game)
+    ;
 }
 
 /// Marks that it belongs to this mini-game, so that it can be
@@ -146,38 +199,20 @@ pub struct RaceGameMarker;
 
 /// Racing game is a game where each player is a car, and they drive
 /// it around a track :)
+/// This doesn't start the game directly, but it is started when
+/// the track scene is loaded (see on_scene_load)
 pub fn start_game(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     configs: Res<Assets<Config>>,
     config_resource: Res<ConfigAccessor>,
-    mut started: ResMut<Started>,
     mut scene_info: ResMut<SceneInfo>,
 ) {
-    if started.0 {
-        return;
-    }
-    let config = configs.get(&config_resource.handle);
-    if config.is_none() {
-        return;
-    }
-    info!("Starting racing game!");
-    started.0 = true;
-    let config = config.unwrap();
-    let car_friction = cfloat![config, CAR_FRICTION];
-    let car_size = cfloat![config, CAR_SIZE];
-    let car_restitution = cfloat![config, CAR_RESTITUTION];
+    let config = configs
+        .get(&config_resource.handle)
+        .expect("Config does not exist");
     let ground_friction = cfloat![config, GROUND_FRICTION];
     let ground_restitution = cfloat![config, GROUND_RESTITUTION];
-    // ambient lights do nothing??
-    // commands.spawn((
-    //     RaceGameMarker,
-    //     AmbientLight {
-    //         brightness: AMBIENT_DAYLIGHT,
-    //         affects_lightmapped_meshes: true,
-    //         color: WHITE.into()
-    //     }
-    // ));
 
     // debug camera
     commands.spawn((
@@ -202,8 +237,12 @@ pub fn start_game(
     // spawn the actual scene
     let scene_handle =
         asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/race-1/race-1.glb"));
-    commands.spawn((RaceGameMarker, SceneRoot(scene_handle.clone())));
-    scene_info.handle = scene_handle;
+    commands.spawn((
+        RaceGameMarker,
+        RacingSceneMarker,
+        SceneRoot(scene_handle.clone()),
+    ));
+    scene_info.scene_handle = scene_handle;
 
     // ground collider
     commands.spawn((
@@ -216,6 +255,7 @@ pub fn start_game(
 
     let car_handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"));
     scene_info.as_mut().car_handle = car_handle.clone();
+
     // debug car
     commands.spawn((
         DebugPlayer,
@@ -224,48 +264,11 @@ pub fn start_game(
             scene_info.as_ref(),
             &configs,
             &config_resource,
-            Color::BLACK
+            Color::BLACK,
         ),
     ));
 }
 
-fn update_colliders(
-    mut commands: Commands,
-    cars: Query<&GlobalTransform, With<Player>>,
-    debug_car: Single<&GlobalTransform, With<DebugPlayer>>,
-    inactive: Query<
-        (Entity, &GlobalTransform, &DistanceSensitiveStaticCollider),
-        With<RigidBodyDisabled>,
-    >,
-    active: Query<
-        (Entity, &GlobalTransform, &DistanceSensitiveStaticCollider),
-        Without<RigidBodyDisabled>,
-    >,
-) {
-    let mut pts = cars
-        .into_iter()
-        .map(|t| t.translation())
-        .collect::<Vec<_>>();
-    pts.push(debug_car.translation());
-    for (ent, pos, mut dist) in inactive {
-        for t in pts.iter() {
-            if t.distance(pos.translation()) < dist.distance {
-                commands.entity(ent).remove::<RigidBodyDisabled>();
-                break;
-            }
-        }
-    }
-    'colliders: for (ent, pos, mut dist) in active {
-        for t in pts.iter() {
-            if t.distance(pos.translation()) < dist.distance {
-                // keep it active
-                continue 'colliders;
-            }
-        }
-        // now inactive
-        commands.entity(ent).insert(RigidBodyDisabled);
-    }
-}
 fn step(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fixed>>) {
     physics_time.advance_by(fixed_time.delta());
 }
@@ -369,8 +372,7 @@ fn spawn_new_players(
     let config = configs.get(&config_resource.handle).expect("no config!");
     let track_radius = cfloat![config, TRACK_RADIUS];
     let spawn_area = Circle::new(track_radius);
-    let spawned_cars: HashSet<_> = cars.into_iter()
-        .map(|p| p.0).collect();
+    let spawned_cars: HashSet<_> = cars.into_iter().map(|p| p.0).collect();
     for player in player_mapping.0.keys() {
         if !spawned_cars.contains(player) {
             let pos = spawn_area.sample_interior(&mut random_source.0);
@@ -383,7 +385,7 @@ fn spawn_new_players(
                     scene_info.as_ref(),
                     &configs,
                     &config_resource,
-                    Color::Hsla(Hsla::hsl((65. * *player as f32) % 360., 1.0, 0.5))
+                    Color::Hsla(Hsla::hsl((65. * *player as f32) % 360., 1.0, 0.5)),
                 ),
             ));
         }
@@ -484,7 +486,7 @@ fn count_laps(tethered_things: Query<(&Tether, &mut LapCounter)>, tragnet: Singl
 }
 
 /// Despawn all the entities that have a RaceGameMarker
-pub fn shutdown_game(mut commands: Commands, objects: Query<Entity, With<RaceGameMarker>>) {
+fn shutdown_game(mut commands: Commands, objects: Query<Entity, With<RaceGameMarker>>) {
     for entity in objects {
         commands.entity(entity).despawn();
     }
@@ -500,7 +502,12 @@ fn print_debug_information(
         for (name, tether, counter) in lap_things.iter() {
             let name = name.map(|s| s.as_str()).unwrap_or("unnamed");
             let current_sector = tragnet.get_current_sector(tether);
-            info!("{name}: lap={}, sector={}, current sector={}", counter.lap(), counter.sector(), current_sector);
+            info!(
+                "{name}: lap={}, sector={}, current sector={}",
+                counter.lap(),
+                counter.sector(),
+                current_sector
+            );
         }
         info!("-----debug-end-----");
     }

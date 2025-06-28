@@ -1,8 +1,6 @@
 use bevy::asset::Assets;
 use bevy::pbr::StandardMaterial;
-use bevy::prelude::{Color, Component, Handle, Res, ResMut};
-
-pub const CAR_BODY_MAT_NAME: &str = "body";
+use bevy::prelude::{Color, Component, Handle};
 
 #[derive(Component, Debug)]
 pub struct CarStyle {

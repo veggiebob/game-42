@@ -172,7 +172,7 @@ fn main() {
         .init_asset::<Config>()
         .init_asset_loader::<ConfigLoader>()
         ;
-    racing::init_app(&mut app);
+    games::init_games(&mut app);
     debug_input::init(&mut app);
     app.run();
 }

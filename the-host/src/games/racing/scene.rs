@@ -1,16 +1,16 @@
-use std::collections::HashMap;
+use crate::games::racing::style::{CarStyle};
+use crate::games::racing::track::{Tragnet, TragnetAnchor};
+use crate::games::racing::{COLLISION_MAT_NAME, RACE_CHECKPOINTS, RaceGameMarker, SceneInfo, TRAGNET_MAT_NAME, RacingSceneMarker, CAR_BODY_MAT_NAME};
 use avian3d::prelude::{Collider, RigidBody};
 use bevy::asset::Assets;
 use bevy::gltf::GltfMaterialName;
 use bevy::log::{info, warn};
 use bevy::pbr::StandardMaterial;
-use bevy::prelude::{Children, Commands, Mesh, Mesh3d, MeshMaterial3d, Name, Query, Res, ResMut, Transform, TransformHelper, Trigger};
+use bevy::prelude::{Children, Commands, Mesh, Mesh3d, MeshMaterial3d, Name, NextState, Query, Res, ResMut, Transform, TransformHelper, Trigger};
 use bevy::scene::SceneInstanceReady;
 use regex::Regex;
-use crate::games::racing::{DistanceSensitiveStaticCollider, RaceGameMarker, SceneInfo, COLLISION_MAT_NAME, RACE_CHECKPOINTS, TRAGNET_MAT_NAME};
-use crate::games::racing::style::{CarStyle, CAR_BODY_MAT_NAME};
-use crate::games::racing::track::{Tragnet, TragnetAnchor};
-
+use std::collections::HashMap;
+use crate::games::GamePhase;
 // Steps for updating/exporting the scene:
 // 1. Save .blend file in assets/blender/<filename>
 // 2. Export to assets/gltf/<asset name>/<asset name>.glb
@@ -44,6 +44,7 @@ pub fn on_scene_load(
     trigger: Trigger<SceneInstanceReady>,
     mut commands: Commands,
     mut car_style: Query<&mut CarStyle>,
+    mut next_state: ResMut<NextState<GamePhase>>,
     gltf_children: Query<(&GltfMaterialName, &Mesh3d, &Name)>,
     mesh_materials: Query<&MeshMaterial3d<StandardMaterial>>,
     mut material_assets: ResMut<Assets<StandardMaterial>>,
@@ -51,6 +52,7 @@ pub fn on_scene_load(
     children: Query<&Children>,
     transform_helper: TransformHelper,
     mut scene_info: ResMut<SceneInfo>,
+    racing_scene_marker: Query<&RacingSceneMarker>,
 ) {
     let mut current_style = car_style.get_mut(trigger.target()).ok();
     info!("Scene Instance Ready: {:?}", trigger.target());
@@ -70,10 +72,7 @@ pub fn on_scene_load(
                     if let Some(collider) = Collider::convex_hull_from_mesh(mesh) {
                         commands
                             .entity(descendant)
-                            .insert((
-                                RigidBody::Static,
-                                DistanceSensitiveStaticCollider { distance: 2.0 },
-                            ))
+                            .insert(RigidBody::Static)
                             .remove::<Mesh3d>()
                             .insert(collider);
                     } else {
@@ -97,7 +96,8 @@ pub fn on_scene_load(
                 // info!("Adding to tragnet. Name is {}. Index {index} and transform {:?}", name.as_str(), transform);
             } else if gltf_name.0 == CAR_BODY_MAT_NAME {
                 if let Some(style) = &mut current_style {
-                    let material = mesh_materials.get(descendant)
+                    let material = mesh_materials
+                        .get(descendant)
                         .ok()
                         .and_then(|m_mat| material_assets.get(m_mat.id()))
                         .cloned()
@@ -105,19 +105,21 @@ pub fn on_scene_load(
                     let handle = material_assets.add(material);
                     style.handle = handle.clone();
                     style.apply_style(material_assets.as_mut());
-                    commands.entity(descendant)
-                        .insert(MeshMaterial3d(handle));
+                    commands.entity(descendant).insert(MeshMaterial3d(handle));
                 }
             }
         }
     }
-    let mut pts: Vec<_> = anchors.into_iter().collect();
-    if !pts.is_empty() {
+    if racing_scene_marker.get(trigger.target()).is_ok() {
+        let mut pts: Vec<_> = anchors.into_iter().collect();
         pts.sort_by_key(|(i, _a)| *i);
         let scene_info = scene_info.as_mut();
-        scene_info.race_start = pts[0].1.transform.clone();
+        scene_info.race_start = pts[0].1.transform;
         let new_tragnet =
             Tragnet::new(pts.into_iter().map(|(_i, a)| a).collect(), RACE_CHECKPOINTS);
         commands.spawn((RaceGameMarker, new_tragnet));
+        // start the game
+        info!("Starting racing game!");
+        next_state.set(GamePhase::PlayingGame);
     }
 }
