@@ -1,5 +1,8 @@
 {
   "racing": {
+    "init-cars-per-track-width": 4,
+    "init-car-front-back-spacing": 1.4,
+    "starting-line-offset": 0.3,
     "collision-gltf-mat-name": "collision",
     "car-size": 0.3,
     "car-friction": 0.0,

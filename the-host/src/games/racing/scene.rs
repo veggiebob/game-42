@@ -119,7 +119,6 @@ pub fn on_scene_load(
             Tragnet::new(pts.into_iter().map(|(_i, a)| a).collect(), RACE_CHECKPOINTS);
         commands.spawn((RaceGameMarker, new_tragnet));
         // start the game
-        info!("Starting racing game!");
-        next_state.set(GamePhase::PlayingGame);
+        // next_state.set(GamePhase::PlayingGame);
     }
 }

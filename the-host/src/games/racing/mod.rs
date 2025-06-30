@@ -24,14 +24,16 @@ use bevy::gltf::{GltfAssetLabel, GltfMaterialName};
 use bevy::math::{Quat, ShapeSample, vec3};
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
 use bevy::prelude::{
-    AlphaMode, AmbientLight, AssetServer, Assets, Bundle, Camera3d, Children, Circle, Color,
-    Commands, Component, ComputedStates, DirectionalLight, Entity, Fixed, GlobalTransform, Hsla,
-    IntoScheduleConfigs, LinearRgba, Mesh, Mesh3d, Meshable, Name, OnEnter, OnExit, Or, Query, Res,
-    ResMut, Resource, Scene, SceneRoot, Single, Sphere, Time, Transform, TransformHelper, Trigger,
-    Update, Vec3, With, Without, default, in_state, info,
+    AlphaMode, AmbientLight, AppExtStates, AssetServer, Assets, Bundle, Camera3d, Children, Circle,
+    Color, Commands, Component, ComputedStates, Condition, DirectionalLight, Entity, Fixed,
+    GlobalTransform, Hsla, IntoScheduleConfigs, LinearRgba, Local, Mesh, Mesh3d, Meshable, Name,
+    OnEnter, OnExit, Or, Query, Res, ResMut, Resource, Scene, SceneRoot, Single, Sphere, Time,
+    Timer, TimerMode, Transform, TransformHelper, Trigger, Update, Vec3, With, Without, default,
+    in_state, info,
 };
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::{ButtonType, PlayerInput};
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
 
@@ -43,12 +45,16 @@ use std::f32::consts::PI;
 // these are constants that don't really need to be hot reloaded or anything
 // because they change very infrequently
 const RACE_CHECKPOINTS: usize = 3;
+const GRAVITY: f32 = 20.0;
 const COLLISION_MAT_NAME: &str = "collision";
 const TRAGNET_MAT_NAME: &str = "tragnet";
 pub const CAR_BODY_MAT_NAME: &str = "body";
 
 // --- CONFIG FILE CONSTANTS ---
 const GAME: &str = "racing"; // top-level name of game in config file
+const INIT_CARS_PER_TRACK_WIDTH: &str = "init-cars-per-track-width";
+const INIT_CAR_FRONT_BACK_SPACING: &str = "init-car-front-back-spacing";
+const STARTING_LINE_OFFSET: &str = "starting-line-offset";
 const CAR_SIZE: &str = "car-size";
 const CAR_RESTITUTION: &str = "car-restitution";
 const CAR_FRICTION: &str = "car-friction";
@@ -115,6 +121,7 @@ impl ComputedStates for PreRacing {
     type SourceStates = (ConfigLoadState, CurrentGame, GamePhase);
 
     fn compute(sources: Self::SourceStates) -> Option<Self> {
+        info!("Computing PreRacing! States are {:?}", sources);
         match sources {
             (ConfigLoadState::Loaded, CurrentGame::Racing, GamePhase::PreGame) => Some(Self),
             _ => None,
@@ -163,21 +170,41 @@ struct GameInfo {
     checkpoints: usize,
 }
 
+struct EverySecondTimer(Timer);
+impl Default for EverySecondTimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(1., TimerMode::Repeating))
+    }
+}
+
+fn schedule_1hz(mut timer: Local<EverySecondTimer>, time: Res<Time>) -> bool {
+    timer.0.tick(time.delta()).just_finished()
+}
+
 pub fn init_app(app: &mut App) {
     app.add_plugins(FlyCameraPlugin)
         .add_plugins(PhysicsPlugins::default())
         .add_plugins(PhysicsDebugPlugin::default()) // to be removed
-        .insert_resource(Gravity(Vec3::NEG_Y * 20.0))
-        .insert_resource(GameInfo { checkpoints: 3 })
+        .insert_resource(Gravity(Vec3::NEG_Y * GRAVITY))
+        .insert_resource(GameInfo {
+            checkpoints: RACE_CHECKPOINTS,
+        })
         .insert_resource(SceneInfo::default())
+        // states
+        .add_computed_state::<PreRacing>()
+        .add_computed_state::<PlayingRacing>()
+        .add_computed_state::<PostRacing>()
+        // systems & observers
         .add_systems(OnEnter(PreRacing), start_game)
         .add_observer(on_scene_load) // this actually starts the game
+        .add_systems(
+            Update,
+            arrange_cars_pre_race.run_if(in_state(PreRacing).and(schedule_1hz)),
+        )
         .add_systems(
             FixedUpdate,
             (
                 tragnet_players,
-                spawn_new_players,
-                despawn_disconnected_players,
                 control_cars,
                 orient_cars,
                 control_debug_car, // to be removed
@@ -186,10 +213,14 @@ pub fn init_app(app: &mut App) {
         )
         .add_systems(
             Update,
-            (step, print_debug_information, count_laps).run_if(in_state(PlayingRacing)),
+            (despawn_disconnected_players, spawn_new_players)
+                .run_if(in_state(PreRacing).and(schedule_1hz)),
         )
-        .add_systems(OnExit(PostRacing), shutdown_game)
-    ;
+        .add_systems(
+            Update,
+            (step_physics, print_debug_information, count_laps).run_if(in_state(PlayingRacing)),
+        )
+        .add_systems(OnExit(PostRacing), shutdown_game);
 }
 
 /// Marks that it belongs to this mini-game, so that it can be
@@ -201,13 +232,14 @@ pub struct RaceGameMarker;
 /// it around a track :)
 /// This doesn't start the game directly, but it is started when
 /// the track scene is loaded (see on_scene_load)
-pub fn start_game(
+fn start_game(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     configs: Res<Assets<Config>>,
     config_resource: Res<ConfigAccessor>,
     mut scene_info: ResMut<SceneInfo>,
 ) {
+    info!("Starting racing game!");
     let config = configs
         .get(&config_resource.handle)
         .expect("Config does not exist");
@@ -269,7 +301,52 @@ pub fn start_game(
     ));
 }
 
-fn step(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fixed>>) {
+fn arrange_cars_pre_race(
+    players: Query<(&mut Transform, &Player)>,
+    debug_car: Query<&mut Transform, (With<DebugPlayer>, Without<Player>)>,
+    scene_info: Res<SceneInfo>,
+    configs: Res<Assets<Config>>,
+    config_resource: Res<ConfigAccessor>,
+) {
+    let config = configs
+        .get(&config_resource.handle)
+        .expect("Config does not exist");
+    let track_radius = cfloat![config, TRACK_RADIUS];
+    let cars_per_track = cint![config, INIT_CARS_PER_TRACK_WIDTH];
+    let car_size = cfloat![config, CAR_SIZE];
+    let front_back_car_spacing = cfloat![config, INIT_CAR_FRONT_BACK_SPACING];
+    let starting_line_offset = cfloat![config, STARTING_LINE_OFFSET];
+    let mut sorted_players: Vec<_> = players.into_iter().collect();
+    sorted_players.sort_by_key(|(_, player)| player.0);
+    let right = scene_info.race_start.right();
+    let behind = scene_info.race_start.forward();
+    let start_transform = scene_info
+        .race_start
+        .with_translation(scene_info.race_start.translation - right * track_radius);
+    for (row, chunk) in sorted_players
+        .into_iter()
+        .map(|(t, p)| t)
+        .chain(debug_car)
+        .chunks(cars_per_track as usize)
+        .into_iter()
+        .enumerate()
+    {
+        let cars: Vec<_> = chunk.collect();
+        let num_cars_in_row = cars.len();
+        for (i, mut t) in cars.into_iter().enumerate() {
+            let transform = start_transform.with_translation(
+                start_transform.translation
+                    + ((i as f32 + 0.5) / num_cars_in_row as f32) * track_radius * 2. * right
+                    + (row as f32 * front_back_car_spacing * car_size + starting_line_offset) * behind
+                    + Vec3::Y * car_size * 0.5,
+            );
+            t.translation = transform.translation;
+            t.rotation = scene_info.race_start.rotation;
+        }
+    }
+}
+
+fn step_physics(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fixed>>) {
     physics_time.advance_by(fixed_time.delta());
 }
 
@@ -309,6 +386,8 @@ fn tragnet_players(
     }
 }
 
+/// Keep the cars from tipping over and make them move in the direction
+/// consistent with their wheels.
 fn orient_cars(
     cars: Query<
         (&mut Transform, &mut LinearVelocity),
@@ -454,7 +533,6 @@ pub fn control_cars(
             pos.rotation = pos
                 .rotation
                 .rotate_towards(pos.rotation.mul_quat(rotate_right), co.turn);
-            // linear_velocity.0 = rotate_right.mul_vec3(linear_velocity.0);
         }
     }
 }

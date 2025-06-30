@@ -15,7 +15,8 @@ qrcodegen = "1.8.0"
 bevy_fly_camera = "0.16.0"
 avian3d = "0.3"
 thiserror = "1.0"
-regex = "1.11.1"
+regex = "1.11"
+itertools = "0.14"
 
 [dependencies.bevy]
 version = "0.16"

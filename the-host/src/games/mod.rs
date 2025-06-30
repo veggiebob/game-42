@@ -1,7 +1,9 @@
 use bevy::app::Update;
+use bevy::log::info;
 use crate::PlayerNum;
 use bevy::prelude::{App, AppExtStates, Assets, Component, NextState, Res, ResMut, State, States};
 use crate::config::{Config, ConfigAccessor};
+use crate::debug_input::DebugPlayerInput;
 
 pub mod racing;
 pub mod waiting;
@@ -49,11 +51,10 @@ enum ConfigLoadState {
 pub fn init_games(app: &mut App) {
     app.add_systems(Update, update_config_load_state);
     app.init_state::<ConfigLoadState>();
+    app.init_state::<GamePhase>();
+    app.init_state::<CurrentGame>();
+    app.add_systems(Update, debug_go_to_racing_game_on_spacebar); // to be removed
     racing::init_app(app);
-}
-
-fn config_is_loaded(config_loaded: Res<State<ConfigLoadState>>) -> bool {
-    matches!(config_loaded.get(), ConfigLoadState::Loaded)
 }
 
 fn update_config_load_state(
@@ -64,7 +65,20 @@ fn update_config_load_state(
 ) {
     if let ConfigLoadState::Loading = config_load_state.get() {
         if configs.get(&config_resource.handle).is_some() {
+            info!("Config is loaded!!");
             next_state.set(ConfigLoadState::Loaded);
         }
+    }
+}
+
+fn debug_go_to_racing_game_on_spacebar(
+    mut next_game_phase: ResMut<NextState<GamePhase>>,
+    mut next_game: ResMut<NextState<CurrentGame>>,
+    mut debug_player_input: ResMut<DebugPlayerInput>,
+) {
+    if debug_player_input.button_1.just_pressed() {
+        next_game_phase.set(GamePhase::PreGame);
+        next_game.set(CurrentGame::Racing);
+        info!("Pressed space!!");
     }
 }
