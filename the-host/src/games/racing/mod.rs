@@ -11,7 +11,7 @@ use crate::games::racing::scene::on_scene_load;
 use crate::games::racing::style::CarStyle;
 use crate::games::racing::track::{LapCounter, Tether, Tragnet, TragnetAnchor};
 use crate::games::{ConfigLoadState, CurrentGame, GamePhase, Player};
-use crate::{PlayerInputs, PlayerMapping, RandomSource};
+use crate::{PlayerInputs, PlayerMapping, RandomSource, is_debug_mode};
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::{
     Collider, Friction, Gravity, LinearVelocity, LockedAxes, MaxLinearSpeed, Physics,
@@ -27,9 +27,9 @@ use bevy::prelude::{
     AlphaMode, AmbientLight, AppExtStates, AssetServer, Assets, Bundle, Camera3d, Children, Circle,
     Color, Commands, Component, ComputedStates, Condition, DirectionalLight, Entity, Fixed,
     GlobalTransform, Hsla, IntoScheduleConfigs, LinearRgba, Local, Mesh, Mesh3d, Meshable, Name,
-    OnEnter, OnExit, Or, Query, Res, ResMut, Resource, Scene, SceneRoot, Single, Sphere, Time,
-    Timer, TimerMode, Transform, TransformHelper, Trigger, Update, Vec3, With, Without, default,
-    in_state, info,
+    NextState, OnEnter, OnExit, Or, Query, Res, ResMut, Resource, Scene, SceneRoot, Single, Sphere,
+    Time, Timer, TimerMode, Transform, TransformHelper, Trigger, Update, Vec3, With, Without,
+    default, in_state, info,
 };
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::{ButtonType, PlayerInput};
@@ -45,6 +45,7 @@ use std::f32::consts::PI;
 // these are constants that don't really need to be hot reloaded or anything
 // because they change very infrequently
 const RACE_CHECKPOINTS: usize = 3;
+const RACE_LAPS: usize = 3;
 const GRAVITY: f32 = 20.0;
 const COLLISION_MAT_NAME: &str = "collision";
 const TRAGNET_MAT_NAME: &str = "tragnet";
@@ -184,7 +185,6 @@ fn schedule_1hz(mut timer: Local<EverySecondTimer>, time: Res<Time>) -> bool {
 pub fn init_app(app: &mut App) {
     app.add_plugins(FlyCameraPlugin)
         .add_plugins(PhysicsPlugins::default())
-        .add_plugins(PhysicsDebugPlugin::default()) // to be removed
         .insert_resource(Gravity(Vec3::NEG_Y * GRAVITY))
         .insert_resource(GameInfo {
             checkpoints: RACE_CHECKPOINTS,
@@ -196,20 +196,19 @@ pub fn init_app(app: &mut App) {
         .add_computed_state::<PostRacing>()
         // systems & observers
         .add_systems(OnEnter(PreRacing), start_game)
-        .add_observer(on_scene_load) // this actually starts the game
+        .add_observer(on_scene_load)
+        .add_systems(Update, everyone_ready.run_if(in_state(PreRacing))) // this actually starts the game
         .add_systems(
             Update,
             arrange_cars_pre_race.run_if(in_state(PreRacing).and(schedule_1hz)),
         )
         .add_systems(
             FixedUpdate,
-            (
-                tragnet_players,
-                control_cars,
-                orient_cars,
-                control_debug_car, // to be removed
-            )
-                .run_if(in_state(PlayingRacing)),
+            (tragnet_players, control_cars, orient_cars).run_if(in_state(PlayingRacing)),
+        )
+        .add_systems(
+            FixedUpdate,
+            control_debug_car.run_if(is_debug_mode), // to be removed
         )
         .add_systems(
             Update,
@@ -221,6 +220,10 @@ pub fn init_app(app: &mut App) {
             (step_physics, print_debug_information, count_laps).run_if(in_state(PlayingRacing)),
         )
         .add_systems(OnExit(PostRacing), shutdown_game);
+
+    if is_debug_mode() {
+        app.add_plugins(PhysicsDebugPlugin::default()); // to be removed
+    }
 }
 
 /// Marks that it belongs to this mini-game, so that it can be
@@ -288,17 +291,44 @@ fn start_game(
     let car_handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset("gltf/car/car.glb"));
     scene_info.as_mut().car_handle = car_handle.clone();
 
-    // debug car
-    commands.spawn((
-        DebugPlayer,
-        car_bundle(
-            Transform::from_xyz(0., 2., 0.),
-            scene_info.as_ref(),
-            &configs,
-            &config_resource,
-            Color::BLACK,
-        ),
-    ));
+    if is_debug_mode() {
+        // debug car
+        commands.spawn((
+            DebugPlayer,
+            car_bundle(
+                Transform::from_xyz(0., 2., 0.),
+                scene_info.as_ref(),
+                &configs,
+                &config_resource,
+                Color::BLACK,
+            ),
+        ));
+    }
+}
+
+fn everyone_ready(mut game_phase: ResMut<NextState<GamePhase>>, player_inputs: Res<PlayerInputs>) {
+    if !player_inputs.0.is_empty()
+        && player_inputs
+            .0
+            .values()
+            .all(|pi| pi.is_pressed(ButtonType::A))
+    {
+        // start the game!
+        info!("Everyone pressed ready button... starting game!");
+        game_phase.set(GamePhase::PlayingGame);
+    }
+}
+
+fn someone_finished(
+    mut game_phase: ResMut<NextState<GamePhase>>,
+    lap_counters: Query<(&LapCounter, &Player)>,
+) {
+    for (lap_counter, player) in lap_counters {
+        if lap_counter.lap() >= RACE_LAPS {
+            game_phase.set(GamePhase::PostGame);
+            info!("Player {} won!", player.0);
+        }
+    }
 }
 
 fn arrange_cars_pre_race(
@@ -337,7 +367,8 @@ fn arrange_cars_pre_race(
             let transform = start_transform.with_translation(
                 start_transform.translation
                     + ((i as f32 + 0.5) / num_cars_in_row as f32) * track_radius * 2. * right
-                    + (row as f32 * front_back_car_spacing * car_size + starting_line_offset) * behind
+                    + (row as f32 * front_back_car_spacing * car_size + starting_line_offset)
+                        * behind
                     + Vec3::Y * car_size * 0.5,
             );
             t.translation = transform.translation;

@@ -154,6 +154,10 @@ fn grab_mouse(
     }
 }
 
+pub fn is_debug_mode() -> bool {
+    false
+}
+
 fn main() {
     let mut app = App::new();
     app
