@@ -45,7 +45,7 @@ use std::f32::consts::PI;
 // these are constants that don't really need to be hot reloaded or anything
 // because they change very infrequently
 const RACE_CHECKPOINTS: usize = 3;
-const RACE_LAPS: usize = 3;
+const RACE_LAPS: usize = 1;
 const GRAVITY: f32 = 20.0;
 const COLLISION_MAT_NAME: &str = "collision";
 const TRAGNET_MAT_NAME: &str = "tragnet";
@@ -122,7 +122,6 @@ impl ComputedStates for PreRacing {
     type SourceStates = (ConfigLoadState, CurrentGame, GamePhase);
 
     fn compute(sources: Self::SourceStates) -> Option<Self> {
-        info!("Computing PreRacing! States are {:?}", sources);
         match sources {
             (ConfigLoadState::Loaded, CurrentGame::Racing, GamePhase::PreGame) => Some(Self),
             _ => None,
@@ -208,7 +207,7 @@ pub fn init_app(app: &mut App) {
         )
         .add_systems(
             FixedUpdate,
-            control_debug_car.run_if(is_debug_mode), // to be removed
+            (print_debug_information, control_debug_car).run_if(is_debug_mode),
         )
         .add_systems(
             Update,
@@ -217,7 +216,11 @@ pub fn init_app(app: &mut App) {
         )
         .add_systems(
             Update,
-            (step_physics, print_debug_information, count_laps).run_if(in_state(PlayingRacing)),
+            (step_physics, count_laps).run_if(in_state(PlayingRacing)),
+        )
+        .add_systems(
+            Update,
+            someone_finished.run_if(in_state(PlayingRacing).and(schedule_1hz)),
         )
         .add_systems(OnExit(PostRacing), shutdown_game);
 
@@ -320,13 +323,18 @@ fn everyone_ready(mut game_phase: ResMut<NextState<GamePhase>>, player_inputs: R
 }
 
 fn someone_finished(
+    mut commands: Commands,
     mut game_phase: ResMut<NextState<GamePhase>>,
-    lap_counters: Query<(&LapCounter, &Player)>,
+    lap_counters: Query<(Entity, &LapCounter, &Player)>,
 ) {
-    for (lap_counter, player) in lap_counters {
+    if lap_counters.is_empty() {
+        info!("All players finished!");
+        game_phase.set(GamePhase::PostGame);
+    }
+    for (entity, lap_counter, player) in lap_counters {
         if lap_counter.lap() >= RACE_LAPS {
-            game_phase.set(GamePhase::PostGame);
-            info!("Player {} won!", player.0);
+            info!("Player {} finished!", player.0);
+            commands.entity(entity).despawn();
         }
     }
 }
