@@ -9,7 +9,7 @@ pub mod racing;
 pub mod waiting;
 
 /// Component to identify player by a player number
-#[derive(Component)]
+#[derive(Component, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Player(PlayerNum);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, States)]
@@ -49,11 +49,14 @@ enum ConfigLoadState {
 }
 
 pub fn init_games(app: &mut App) {
+    // init things for all games
     app.add_systems(Update, update_config_load_state);
     app.init_state::<ConfigLoadState>();
     app.init_state::<GamePhase>();
     app.init_state::<CurrentGame>();
     app.add_systems(Update, debug_go_to_racing_game_on_spacebar); // to be removed
+    
+    // init specific games
     racing::init_app(app);
 }
 
@@ -79,6 +82,5 @@ fn debug_go_to_racing_game_on_spacebar(
     if debug_player_input.button_1.just_pressed() {
         next_game_phase.set(GamePhase::PreGame);
         next_game.set(CurrentGame::Racing);
-        info!("Pressed space!!");
     }
 }

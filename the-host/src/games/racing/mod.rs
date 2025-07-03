@@ -1,6 +1,7 @@
 mod scene;
 mod style;
 mod track;
+mod ui;
 
 use crate::config::{
     Config, ConfigAccessor, ConfigPath, ConfigPathElem, ConfigType, ConfigValue, ConfigValueMap,
@@ -10,6 +11,9 @@ use crate::debug_input::{DebugPlayer, DebugPlayerInput};
 use crate::games::racing::scene::on_scene_load;
 use crate::games::racing::style::CarStyle;
 use crate::games::racing::track::{LapCounter, Tether, Tragnet, TragnetAnchor};
+use crate::games::racing::ui::{
+    roster_join_leave, start_pregame_ui, update_indicators, update_table_ui,
+};
 use crate::games::{ConfigLoadState, CurrentGame, GamePhase, Player};
 use crate::{PlayerInputs, PlayerMapping, RandomSource, is_debug_mode};
 use avian3d::PhysicsPlugins;
@@ -24,19 +28,18 @@ use bevy::gltf::{GltfAssetLabel, GltfMaterialName};
 use bevy::math::{Quat, ShapeSample, vec3};
 use bevy::pbr::{MaterialPlugin, MeshMaterial3d};
 use bevy::prelude::{
-    AlphaMode, AmbientLight, AppExtStates, AssetServer, Assets, Bundle, Camera3d, Children, Circle,
-    Color, Commands, Component, ComputedStates, Condition, DirectionalLight, Entity, Fixed,
-    GlobalTransform, Hsla, IntoScheduleConfigs, LinearRgba, Local, Mesh, Mesh3d, Meshable, Name,
-    NextState, OnEnter, OnExit, Or, Query, Res, ResMut, Resource, Scene, SceneRoot, Single, Sphere,
-    Time, Timer, TimerMode, Transform, TransformHelper, Trigger, Update, Vec3, With, Without,
-    default, in_state, info,
+    AlphaMode, AmbientLight, AppExtStates, AssetServer, Assets, Bundle, Camera2d, Camera3d,
+    Children, Circle, Color, Commands, Component, ComputedStates, Condition, DefaultUiCamera,
+    DirectionalLight, Entity, Fixed, GlobalTransform, Hsla, IntoScheduleConfigs, LinearRgba, Local,
+    Mesh, Mesh3d, Meshable, Name, NextState, OnEnter, OnExit, Or, Query, Res, ResMut, Resource,
+    Scene, SceneRoot, Single, Sphere, Time, Timer, TimerMode, Transform, TransformHelper, Trigger,
+    Update, Vec3, With, Without, default, in_state, info,
 };
 use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 use game_42_net::controls::{ButtonType, PlayerInput};
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
-
 // The first few sections before the "GAME" section should probably
 // be replicated for other games. I haven't figured out how to abstract
 // them yet and I don't care (yet).
@@ -177,6 +180,7 @@ impl Default for EverySecondTimer {
     }
 }
 
+/// Run once a second
 fn schedule_1hz(mut timer: Local<EverySecondTimer>, time: Res<Time>) -> bool {
     timer.0.tick(time.delta()).just_finished()
 }
@@ -194,13 +198,23 @@ pub fn init_app(app: &mut App) {
         .add_computed_state::<PlayingRacing>()
         .add_computed_state::<PostRacing>()
         // systems & observers
-        .add_systems(OnEnter(PreRacing), start_game)
+        .add_systems(OnEnter(PreRacing), (start_game, start_pregame_ui))
         .add_observer(on_scene_load)
-        .add_systems(Update, everyone_ready.run_if(in_state(PreRacing))) // this actually starts the game
+        .add_systems(
+            Update,
+            (everyone_ready, roster_join_leave).run_if(in_state(PreRacing)),
+        ) // this actually starts the game
+        .add_systems(
+            Update,
+            (update_indicators, update_table_ui)
+                .run_if(schedule_1hz.and(in_state(PreRacing).or(in_state(PlayingRacing)))),
+        )
         .add_systems(
             Update,
             arrange_cars_pre_race.run_if(in_state(PreRacing).and(schedule_1hz)),
         )
+        // teardown pregame UI and replace with during game UI
+        .add_systems(OnEnter(PlayingRacing), ui::ui_to_playing_transition)
         .add_systems(
             FixedUpdate,
             (tragnet_players, control_cars, orient_cars).run_if(in_state(PlayingRacing)),
@@ -309,6 +323,7 @@ fn start_game(
     }
 }
 
+/// Moves GamePhase to PlayingGame if everyone is "ready"
 fn everyone_ready(mut game_phase: ResMut<NextState<GamePhase>>, player_inputs: Res<PlayerInputs>) {
     if !player_inputs.0.is_empty()
         && player_inputs
@@ -339,6 +354,7 @@ fn someone_finished(
     }
 }
 
+/// Arrange the cars into lines behind the starting line
 fn arrange_cars_pre_race(
     players: Query<(&mut Transform, &Player)>,
     debug_car: Query<&mut Transform, (With<DebugPlayer>, Without<Player>)>,
@@ -389,7 +405,7 @@ fn step_physics(mut physics_time: ResMut<Time<Physics>>, fixed_time: Res<Time<Fi
     physics_time.advance_by(fixed_time.delta());
 }
 
-// keep cars from going crazy
+/// Keep cars on the track
 
 fn tragnet_players(
     tragnet: Single<&Tragnet>,
@@ -478,6 +494,8 @@ fn car_bundle(
         CarStyle::new(color),
     )
 }
+
+/// Spawn new players that just connected
 fn spawn_new_players(
     mut commands: Commands,
     mut random_source: ResMut<RandomSource>,
@@ -546,7 +564,7 @@ fn get_control_acc(pi: &PlayerInput, acc_speed: f32, turn_speed: f32) -> Control
     co
 }
 
-// use player inputs to control car based on the player number
+/// Use player inputs to control car based on the player number
 pub fn control_cars(
     cars: Query<(&mut Transform, &Player, &mut LinearVelocity), With<RaceGameMarker>>,
     configs: Res<Assets<Config>>,

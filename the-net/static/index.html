@@ -1,10 +1,43 @@
 <!DOCTYPE html>
 <meta charset="utf-8" />
 <h1>Phone Pad</h1>
-<button id="up">↑</button>
-<button id="down">↓</button>
-<button id="left">←</button>
-<button id="right">→</button>
+<div id="controller">
+    <button class="game-button" id="up">↑</button>
+    <button class="game-button" id="down">↓</button>
+    <button class="game-button" id="left">←</button>
+    <button class="game-button" id="right">→</button>
+    <button class="game-button" id="a">READY</button>
+</div>
+<style>
+    #controller {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        justify-content: center;
+        padding: 1rem;
+    }
+
+    /* Base button styles */
+    .game-button {
+        width: 80px;
+        height: 80px;
+        font-size: 2rem;
+        border: none;
+        border-radius: 50%;
+        background: #333;
+        color: white;
+        box-shadow: 0 4px #111;
+        transition: transform 0.05s ease, box-shadow 0.05s ease;
+        touch-action: manipulation;
+        user-select: none;
+    }
+
+    /* Pressed look */
+    .game-button:active {
+        transform: scale(0.95);
+        box-shadow: 0 1px #000;
+    }
+</style>
 <script>
 const ws = new WebSocket(`ws://${location.host}/game/ws`);
 function send(i) { ws.readyState===1 && ws.send(JSON.stringify(i)); }
@@ -15,13 +48,44 @@ function button_msg(but, pressed) {
 function joystick_msg(joy, value) {
     return {Input: {Joystick: [joy, value]}}
 }
-function btn(id, but) {
-  const b = document.getElementById(id);
-  ["touchstart","mousedown"].forEach(e => b.addEventListener(e, _=>send(button_msg(but, true))));
-  ["touchend","mouseup","mouseleave"].forEach(e => b.addEventListener(e, _=>send(button_msg(but, false))));
+
+const button_id2msg_map = {
+    up: 'Up',
+    down: 'Down',
+    right: 'Right',
+    left: 'Left',
+    a: 'A'
 }
-btn("up",   "Up");
-btn("down", "Down");
-btn("left", "Left");
-btn("right","Right");
+
+const buttons = document.querySelectorAll('.game-button');
+
+buttons.forEach(button => {
+    button.addEventListener('touchstart', e => {
+        e.preventDefault(); // prevent ghost clicks
+        button.classList.add('pressed');
+        sendInput(button.id, true);  // simulate 'button down'
+    });
+
+    button.addEventListener('touchend', e => {
+        e.preventDefault();
+        button.classList.remove('pressed');
+        sendInput(button.id, false); // simulate 'button up'
+    });
+
+    // fallback for desktop mouse testing
+    button.addEventListener('mousedown', () => {
+        button.classList.add('pressed');
+        sendInput(button.id, true);
+    });
+
+    button.addEventListener('mouseup', () => {
+        button.classList.remove('pressed');
+        sendInput(button.id, false);
+    });
+});
+
+function sendInput(buttonId, isPressed) {
+    let but = button_id2msg_map[buttonId];
+    send(button_msg(but, isPressed));
+}
 </script>
