@@ -6,7 +6,7 @@
     <button class="game-button" id="down">↓</button>
     <button class="game-button" id="left">←</button>
     <button class="game-button" id="right">→</button>
-    <button class="game-button" id="a">READY</button>
+    <button class="game-button" id="a">START</button>
 </div>
 <style>
     #controller {
@@ -37,6 +37,7 @@
         transform: scale(0.95);
         box-shadow: 0 1px #000;
     }
+
 </style>
 <script>
 const ws = new WebSocket(`ws://${location.host}/game/ws`);

@@ -1,4 +1,5 @@
 use bevy::app::Update;
+use bevy::color::{Color, Hsla};
 use bevy::log::info;
 use crate::PlayerNum;
 use bevy::prelude::{App, AppExtStates, Assets, Component, NextState, Res, ResMut, State, States};
@@ -12,14 +13,18 @@ pub mod waiting;
 #[derive(Component, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Player(PlayerNum);
 
+pub fn get_player_color(player: &Player) -> Color {
+    Color::Hsla(Hsla::hsl((65. * player.0 as f32) % 360., 1.0, 0.5))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, States)]
 pub enum CurrentGame {
     /// Special reusable screen for waiting for anything
     Waiting,
     /// Special screen for deciding what to play next
-    #[default]
     Voting,
     /// Players race each other in little cars!
+    #[default]
     Racing,
     // this can be extended for new games!
 }
@@ -31,9 +36,9 @@ pub enum GamePhase {
     /// Special menu for debug controls, etc.
     Menu,
     /// Deciding which game to play next
-    #[default]
     Voting,
     /// Player setup, joining/leaving, etc., loading assets, etc.
+    #[default]
     PreGame,
     /// Actual gameplay (player joining/leaving is minimal)
     PlayingGame,

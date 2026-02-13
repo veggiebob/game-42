@@ -1,9 +1,8 @@
-
-use values_macro_derive::{EnumValues, Mapping};
+use enumkit::{EnumMapping, EnumValues};
 use serde::{Deserialize, Serialize};
 
 /// Identifies a button
-#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(EnumValues, EnumMapping, Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum ButtonType {
     A,
     B,
@@ -16,7 +15,7 @@ pub enum ButtonType {
 }
 
 /// Identifies which axis it is (a traditional joystick has 2 axes, X and Y).
-#[derive(EnumValues, Mapping, Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(EnumValues, EnumMapping, Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum JoystickAxis {
     LeftX,
     LeftY,

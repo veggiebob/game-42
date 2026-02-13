@@ -2220,6 +2220,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumkit"
+version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5db65a2862f64d29c67ed443b2c47a833b7e0ecc201e0669f1288fb2fb59d075"
+dependencies = [
+ "quote",
+ "serde",
+ "syn",
+]
+
+[[package]]
+name = "enumkit"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57b4073ea46a06794fed65420bbe9d8f90e088337cd7477d4ddfce91af45d5ae"
+dependencies = [
+ "enumkit-derive",
+]
+
+[[package]]
+name = "enumkit-derive"
+version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7f1272b57dc37c748dac4e7d433b06b1548321999c465d3f877ce4a058ad7af"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "enumn"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2523,13 +2553,13 @@ dependencies = [
 name = "game_42_net"
 version = "0.1.0"
 dependencies = [
+ "enumkit 0.0.1",
  "log",
  "rocket",
  "rocket_ws",
  "serde",
  "serde_json",
  "tokio",
- "values_macro_derive",
 ]
 
 [[package]]
@@ -5315,6 +5345,7 @@ dependencies = [
  "avian3d",
  "bevy",
  "bevy_fly_camera",
+ "enumkit 0.0.0",
  "game_42_net",
  "itertools 0.14.0",
  "qrcodegen",
@@ -5325,7 +5356,6 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "values_macro_derive",
 ]
 
 [[package]]
@@ -5806,15 +5836,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "values_macro_derive"
-version = "0.1.0"
-dependencies = [
- "quote",
- "serde",
- "syn",
-]
 
 [[package]]
 name = "variadics_please"

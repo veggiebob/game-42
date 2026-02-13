@@ -14,7 +14,7 @@ use crate::games::racing::track::{LapCounter, Tether, Tragnet, TragnetAnchor};
 use crate::games::racing::ui::{
     roster_join_leave, start_pregame_ui, update_indicators, update_table_ui,
 };
-use crate::games::{ConfigLoadState, CurrentGame, GamePhase, Player};
+use crate::games::{get_player_color, ConfigLoadState, CurrentGame, GamePhase, Player};
 use crate::{PlayerInputs, PlayerMapping, RandomSource, is_debug_mode};
 use avian3d::PhysicsPlugins;
 use avian3d::prelude::{
@@ -521,7 +521,7 @@ fn spawn_new_players(
                     scene_info.as_ref(),
                     &configs,
                     &config_resource,
-                    Color::Hsla(Hsla::hsl((65. * *player as f32) % 360., 1.0, 0.5)),
+                    get_player_color(&Player(*player)),
                 ),
             ));
         }
